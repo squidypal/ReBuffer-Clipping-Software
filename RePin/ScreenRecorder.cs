@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -25,23 +24,18 @@ namespace RePin
         private readonly bool _useHardwareEncoding;
         private readonly string _savePath;
         
-        // SMALL ADAPTIVE POOL - Only allocates unique frames
-        private readonly Dictionary<int, byte[]> _framePool;
-        private readonly Queue<int> _poolLRU;
-        private int _nextFrameId = 0;
-        private readonly int _maxPoolSlots;
+        // DISK-BASED CIRCULAR BUFFER
+        private string _tempBufferFile;
+        private FileStream? _bufferFileStream;
+        private long _maxBufferSize;
+        private long _currentWritePosition = 0;
+        private int _framesWritten = 0;
+        private readonly object _fileLock = new();
         
-        // Circular buffer stores frame IDs
-        private readonly int[] _frameIds;
-        private readonly int _maxFrames;
-        private int _writeIndex = 0;
-        private int _bufferCount = 0;
-        private readonly object _bufferLock = new();
-        
-        // Capture state
+        // Capture buffer (reused)
         private readonly byte[] _captureBuffer;
-        private int _lastFrameId = -1;
-        private readonly HashSet<int> _activeFrameIds;
+        private readonly byte[] _lastFrameBuffer;
+        private bool _lastFrameValid = false;
         
         private Device? _device;
         private OutputDuplication? _duplicatedOutput;
@@ -57,13 +51,12 @@ namespace RePin
 
         // Stats
         private long _totalFrames = 0;
-        private long _uniqueFrames = 0;
         private long _duplicateFrames = 0;
 
         public int Width => _width;
         public int Height => _height;
-        public int BufferedFrames => _bufferCount;
-        public double BufferedSeconds => (double)_bufferCount / _fps;
+        public int BufferedFrames => Math.Min(_framesWritten, _bufferSeconds * _fps);
+        public double BufferedSeconds => (double)BufferedFrames / _fps;
 
         public ScreenRecorder(
             int bufferSeconds = 30, 
@@ -81,25 +74,32 @@ namespace RePin
             _preset = preset;
             _useHardwareEncoding = useHardwareEncoding;
             _savePath = savePath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
-            _maxFrames = bufferSeconds * fps;
             
             InitializeCapture();
             
-            // CRITICAL: Limit pool to reasonable size
-            // Typical content has 50-150 unique frames in 30s
-            // Allocate for 100 unique frames maximum
-            _maxPoolSlots = 100;
-            _framePool = new Dictionary<int, byte[]>(_maxPoolSlots);
-            _poolLRU = new Queue<int>(_maxPoolSlots);
-            _activeFrameIds = new HashSet<int>();
-            
+            // Allocate capture buffers (only ~16 MB in RAM)
             _captureBuffer = new byte[_bytesPerFrame];
-            _frameIds = new int[_maxFrames];
-            Array.Fill(_frameIds, -1);
+            _lastFrameBuffer = new byte[_bytesPerFrame];
             
-            double maxMemoryMB = (_maxPoolSlots * _bytesPerFrame) / (1024.0 * 1024.0);
-            Console.WriteLine($"✓ Adaptive pool: Max {_maxPoolSlots} unique frames = {maxMemoryMB:F0} MB maximum");
-            Console.WriteLine($"✓ Buffer: {_maxFrames} frame slots (stores frame IDs only)");
+            // Create temp file for circular buffer
+            var tempPath = Path.Combine(Path.GetTempPath(), "RePin");
+            Directory.CreateDirectory(tempPath);
+            _tempBufferFile = Path.Combine(tempPath, $"buffer_{Process.GetCurrentProcess().Id}.tmp");
+            
+            // Calculate max buffer size (store all frames on disk)
+            _maxBufferSize = (long)_bytesPerFrame * _bufferSeconds * _fps;
+            
+            // Pre-allocate file
+            _bufferFileStream = new FileStream(_tempBufferFile, FileMode.Create, FileAccess.ReadWrite, 
+                FileShare.None, 65536, FileOptions.WriteThrough);
+            _bufferFileStream.SetLength(_maxBufferSize);
+            
+            double bufferMB = _maxBufferSize / (1024.0 * 1024.0);
+            double ramMB = (_bytesPerFrame * 2) / (1024.0 * 1024.0); // 2 buffers only
+            
+            Console.WriteLine($"✓ DISK BUFFER: {bufferMB:F0} MB on disk");
+            Console.WriteLine($"✓ RAM: ~{ramMB:F0} MB (buffers only)");
+            Console.WriteLine($"✓ Temp: {_tempBufferFile}");
         }
 
         private void InitializeCapture()
@@ -133,12 +133,12 @@ namespace RePin
             };
             _stagingTexture = new Texture2D(_device, textureDesc);
 
-            Console.WriteLine($"✓ Capture: {_width}×{_height} = {_bytesPerFrame / (1024.0 * 1024.0):F2} MB per frame");
+            Console.WriteLine($"✓ Capture: {_width}×{_height}");
         }
 
         public double EstimateMemoryMB()
         {
-            return (_bytesPerFrame * _maxPoolSlots) / (1024.0 * 1024.0);
+            return (_bytesPerFrame * 2) / (1024.0 * 1024.0);
         }
 
         public async Task StartAsync()
@@ -148,7 +148,6 @@ namespace RePin
             _isRecording = true;
             _cts = new CancellationTokenSource();
             _totalFrames = 0;
-            _uniqueFrames = 0;
             _duplicateFrames = 0;
             
             _captureTask = Task.Run(() => CaptureLoop(_cts.Token));
@@ -162,70 +161,28 @@ namespace RePin
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private unsafe bool IsFrameIdentical(byte[] captured, byte[] stored)
+        private unsafe bool IsFrameIdentical(byte[] frame1, byte[] frame2)
         {
-            // Fast comparison using 64-bit chunks
-            fixed (byte* pCaptured = captured)
-            fixed (byte* pStored = stored)
+            fixed (byte* p1 = frame1)
+            fixed (byte* p2 = frame2)
             {
-                long* p1 = (long*)pCaptured;
-                long* p2 = (long*)pStored;
+                long* l1 = (long*)p1;
+                long* l2 = (long*)p2;
                 int longCount = _bytesPerFrame / 8;
                 
-                // Sample every 16th long for speed
-                for (int i = 0; i < longCount; i += 16)
+                for (int i = 0; i < longCount; i += 64)
                 {
-                    if (p1[i] != p2[i])
+                    if (l1[i] != l2[i])
                         return false;
                 }
                 
-                // If sample matches, do full check
                 for (int i = 0; i < longCount; i++)
                 {
-                    if (p1[i] != p2[i])
+                    if (l1[i] != l2[i])
                         return false;
                 }
             }
-            
             return true;
-        }
-
-        private void CleanupOldFrames()
-        {
-            lock (_bufferLock)
-            {
-                // Build set of currently used frame IDs
-                _activeFrameIds.Clear();
-                for (int i = 0; i < _bufferCount; i++)
-                {
-                    int idx = (_writeIndex - _bufferCount + i + _maxFrames) % _maxFrames;
-                    int frameId = _frameIds[idx];
-                    if (frameId >= 0)
-                    {
-                        _activeFrameIds.Add(frameId);
-                    }
-                }
-                
-                // Remove frames not in use
-                var toRemove = new List<int>();
-                foreach (var frameId in _framePool.Keys)
-                {
-                    if (!_activeFrameIds.Contains(frameId) && frameId != _lastFrameId)
-                    {
-                        toRemove.Add(frameId);
-                    }
-                }
-                
-                foreach (var frameId in toRemove)
-                {
-                    _framePool.Remove(frameId);
-                }
-                
-                if (toRemove.Count > 0)
-                {
-                    Console.WriteLine($"🧹 Cleaned {toRemove.Count} unused frames, {_framePool.Count} remain");
-                }
-            }
         }
 
         private void CaptureLoop(CancellationToken cancellationToken)
@@ -234,144 +191,90 @@ namespace RePin
             var sw = Stopwatch.StartNew();
             long frameNumber = 0;
 
-            Console.WriteLine($"🎬 Capture started: {_fps} FPS");
+            Console.WriteLine($"🎬 Disk-based capture: {_fps} FPS");
 
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    // Precise timing
                     var targetTimeMs = frameNumber * frameIntervalMs;
                     var sleepTimeMs = targetTimeMs - sw.Elapsed.TotalMilliseconds;
 
                     if (sleepTimeMs > 1)
-                    {
                         Thread.Sleep((int)sleepTimeMs);
-                    }
                     else if (sleepTimeMs > 0)
-                    {
                         SpinWait.SpinUntil(() => sw.Elapsed.TotalMilliseconds >= targetTimeMs);
-                    }
 
-                    // Capture frame
                     bool captured = TryCaptureFrameToBuffer();
-                    
-                    int frameIdToStore;
                     
                     if (captured)
                     {
-                        // Check if identical to last frame
-                        bool isDuplicate = false;
+                        bool isDuplicate = _lastFrameValid && IsFrameIdentical(_captureBuffer, _lastFrameBuffer);
                         
-                        if (_lastFrameId >= 0 && _framePool.ContainsKey(_lastFrameId))
+                        if (!isDuplicate)
                         {
-                            isDuplicate = IsFrameIdentical(_captureBuffer, _framePool[_lastFrameId]);
-                        }
-                        
-                        if (isDuplicate)
-                        {
-                            // Reuse last frame ID
-                            frameIdToStore = _lastFrameId;
-                            _duplicateFrames++;
+                            WriteFrameToDisk(_captureBuffer);
+                            Buffer.BlockCopy(_captureBuffer, 0, _lastFrameBuffer, 0, _bytesPerFrame);
+                            _lastFrameValid = true;
                         }
                         else
                         {
-                            // Allocate new frame
-                            frameIdToStore = _nextFrameId++;
-                            
-                            // Check pool size limit
-                            if (_framePool.Count >= _maxPoolSlots)
-                            {
-                                // Remove least recently used
-                                CleanupOldFrames();
-                                
-                                // If still full, force remove oldest
-                                if (_framePool.Count >= _maxPoolSlots && _poolLRU.Count > 0)
-                                {
-                                    int oldId = _poolLRU.Dequeue();
-                                    if (oldId != _lastFrameId)
-                                    {
-                                        _framePool.Remove(oldId);
-                                    }
-                                }
-                            }
-                            
-                            // Store new frame
-                            byte[] newFrame = new byte[_bytesPerFrame];
-                            Buffer.BlockCopy(_captureBuffer, 0, newFrame, 0, _bytesPerFrame);
-                            _framePool[frameIdToStore] = newFrame;
-                            _poolLRU.Enqueue(frameIdToStore);
-                            
-                            _lastFrameId = frameIdToStore;
-                            _uniqueFrames++;
+                            WriteFrameToDisk(_lastFrameBuffer);
+                            _duplicateFrames++;
                         }
-                    }
-                    else
-                    {
-                        // No new frame - reuse last
-                        if (_lastFrameId < 0)
-                        {
-                            frameNumber++;
-                            continue;
-                        }
-                        frameIdToStore = _lastFrameId;
-                        _duplicateFrames++;
-                    }
-
-                    // Store in circular buffer
-                    lock (_bufferLock)
-                    {
-                        _frameIds[_writeIndex] = frameIdToStore;
-                        _writeIndex = (_writeIndex + 1) % _maxFrames;
                         
-                        if (_bufferCount < _maxFrames)
-                        {
-                            _bufferCount++;
-                        }
+                        _totalFrames++;
+                    }
+                    else if (_lastFrameValid)
+                    {
+                        WriteFrameToDisk(_lastFrameBuffer);
+                        _duplicateFrames++;
+                        _totalFrames++;
                     }
 
-                    _totalFrames++;
                     frameNumber++;
 
-                    // Stats every 5 seconds
                     if (frameNumber % (_fps * 5) == 0)
                     {
                         var actualFps = frameNumber / sw.Elapsed.TotalSeconds;
                         var dupRate = (_duplicateFrames / (double)_totalFrames) * 100;
-                        var memoryMB = (_framePool.Count * _bytesPerFrame) / (1024.0 * 1024.0);
+                        var gcMemoryMB = GC.GetTotalMemory(false) / (1024.0 * 1024.0);
                         
-                        Console.WriteLine($"📊 Frame {frameNumber} | FPS: {actualFps:F1} | " +
-                                        $"Pool: {_framePool.Count}/{_maxPoolSlots} | " +
-                                        $"Unique: {_uniqueFrames} | Dup: {_duplicateFrames} ({dupRate:F0}%) | " +
-                                        $"RAM: {memoryMB:F0} MB");
-                    }
-                    
-                    // Cleanup every 30 seconds
-                    if (frameNumber % (_fps * 30) == 0)
-                    {
-                        CleanupOldFrames();
+                        Console.WriteLine($"📊 {frameNumber} frames | {actualFps:F1} FPS | " +
+                                        $"Buf: {BufferedFrames} | Dup: {dupRate:F0}% | RAM: {gcMemoryMB:F0} MB");
                     }
                 }
                 catch (SharpDXException ex) when (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)
                 {
                     frameNumber++;
-                    continue;
-                }
-                catch (SharpDXException ex) when (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Result.Code)
-                {
-                    Console.WriteLine("⚠️ Display changed, reinitializing...");
-                    ReinitializeCapture();
-                    sw.Restart();
-                    frameNumber = 0;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"❌ Capture error: {ex.Message}");
+                    Console.WriteLine($"❌ {ex.Message}");
                     Thread.Sleep(100);
                 }
             }
+        }
 
-            Console.WriteLine($"⏹️  Stopped: {frameNumber} frames | Unique: {_uniqueFrames} | Dup: {_duplicateFrames}");
+        private void WriteFrameToDisk(byte[] frameData)
+        {
+            lock (_fileLock)
+            {
+                try
+                {
+                    long writePosition = _currentWritePosition % _maxBufferSize;
+                    
+                    _bufferFileStream!.Seek(writePosition, SeekOrigin.Begin);
+                    _bufferFileStream.Write(frameData, 0, _bytesPerFrame);
+                    
+                    _currentWritePosition += _bytesPerFrame;
+                    _framesWritten++;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Write error: {ex.Message}");
+                }
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -417,46 +320,32 @@ namespace RePin
             _duplicatedOutput?.Dispose();
             _stagingTexture?.Dispose();
             _device?.Dispose();
-
             Thread.Sleep(500);
             InitializeCapture();
         }
 
         public async Task<string> SaveClipAsync()
         {
-            // Snapshot frame IDs
-            int[] frameIdSnapshot;
+            int framesToSave = BufferedFrames;
             
-            lock (_bufferLock)
+            if (framesToSave == 0)
             {
-                if (_bufferCount == 0)
-                {
-                    Console.WriteLine("❌ No frames in buffer");
-                    return string.Empty;
-                }
-                
-                frameIdSnapshot = new int[_bufferCount];
-                int readIdx = (_writeIndex - _bufferCount + _maxFrames) % _maxFrames;
-                
-                for (int i = 0; i < _bufferCount; i++)
-                {
-                    frameIdSnapshot[i] = _frameIds[readIdx];
-                    readIdx = (readIdx + 1) % _maxFrames;
-                }
+                Console.WriteLine("❌ No frames");
+                return string.Empty;
             }
 
             var filename = $"clip_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
             var filepath = Path.Combine(_savePath, filename);
             Directory.CreateDirectory(_savePath);
 
-            Console.WriteLine($"💾 Saving {frameIdSnapshot.Length} frames...");
+            Console.WriteLine($"💾 Encoding {framesToSave} frames...");
 
-            _ = Task.Run(() => EncodeToMp4(frameIdSnapshot, filepath));
+            _ = Task.Run(() => EncodeFromDisk(framesToSave, filepath));
 
             return filename;
         }
 
-        private void EncodeToMp4(int[] frameIds, string outputPath)
+        private void EncodeFromDisk(int frameCount, string outputPath)
         {
             try
             {
@@ -486,21 +375,29 @@ namespace RePin
                 
                 using var stdin = process.StandardInput.BaseStream;
                 
-                lock (_bufferLock)
+                byte[] frameBuffer = new byte[_bytesPerFrame];
+                
+                lock (_fileLock)
                 {
-                    for (int i = 0; i < frameIds.Length; i++)
+                    long totalFramesInBuffer = Math.Min(_framesWritten, _bufferSeconds * _fps);
+                    long startFrame = _framesWritten - totalFramesInBuffer;
+                    long startPosition = (startFrame * _bytesPerFrame) % _maxBufferSize;
+                    
+                    for (int i = 0; i < frameCount; i++)
                     {
-                        int frameId = frameIds[i];
-                        if (_framePool.ContainsKey(frameId))
+                        long readPosition = (startPosition + (i * _bytesPerFrame)) % _maxBufferSize;
+                        
+                        _bufferFileStream!.Seek(readPosition, SeekOrigin.Begin);
+                        int bytesRead = _bufferFileStream.Read(frameBuffer, 0, _bytesPerFrame);
+                        
+                        if (bytesRead == _bytesPerFrame)
                         {
-                            stdin.Write(_framePool[frameId], 0, _bytesPerFrame);
+                            stdin.Write(frameBuffer, 0, _bytesPerFrame);
                         }
                     }
                 }
 
                 stdin.Close();
-                
-                string errors = process.StandardError.ReadToEnd();
                 process.WaitForExit();
                 sw.Stop();
 
@@ -509,14 +406,10 @@ namespace RePin
                     var fileInfo = new FileInfo(outputPath);
                     Console.WriteLine($"✓ Saved in {sw.ElapsedMilliseconds}ms → {fileInfo.Length / (1024.0 * 1024.0):F2} MB");
                 }
-                else
-                {
-                    Console.WriteLine($"❌ Encoding failed: {errors}");
-                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Encoding error: {ex.Message}");
+                Console.WriteLine($"❌ Encode error: {ex.Message}");
             }
         }
 
@@ -526,21 +419,23 @@ namespace RePin
             _cts?.Cancel();
             _captureTask?.Wait(2000);
 
-            lock (_bufferLock)
+            lock (_fileLock)
             {
-                _framePool.Clear();
-                _poolLRU.Clear();
-                _activeFrameIds.Clear();
-                Array.Fill(_frameIds, -1);
-                _bufferCount = 0;
+                _bufferFileStream?.Close();
+                _bufferFileStream?.Dispose();
+                
+                try
+                {
+                    if (File.Exists(_tempBufferFile))
+                        File.Delete(_tempBufferFile);
+                }
+                catch { }
             }
 
             _duplicatedOutput?.Dispose();
             _stagingTexture?.Dispose();
             _device?.Dispose();
             _cts?.Dispose();
-            
-            GC.Collect(2, GCCollectionMode.Forced, true);
             
             Console.WriteLine("✓ Disposed");
         }
