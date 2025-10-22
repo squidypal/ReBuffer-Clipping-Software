@@ -23,6 +23,7 @@ namespace RePin
         private readonly int _crf;
         private readonly string _preset;
         private readonly bool _useHardwareEncoding;
+        private readonly string _savePath;
         private readonly ConcurrentQueue<FrameData> _frameBuffer;
         private readonly int _maxFrames;
         
@@ -49,7 +50,8 @@ namespace RePin
             int bitrate = 8_000_000,
             int crf = 23,
             string preset = "ultrafast",
-            bool useHardwareEncoding = true)
+            bool useHardwareEncoding = true,
+            string? savePath = null)
         {
             _bufferSeconds = bufferSeconds;
             _fps = fps;
@@ -57,6 +59,7 @@ namespace RePin
             _crf = crf;
             _preset = preset;
             _useHardwareEncoding = useHardwareEncoding;
+            _savePath = savePath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
             _maxFrames = bufferSeconds * fps;
             _frameBuffer = new ConcurrentQueue<FrameData>();
 
@@ -261,8 +264,8 @@ namespace RePin
                 }
 
                 var filename = $"clip_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
-                var filepath = Path.Combine("clips", filename);
-                Directory.CreateDirectory("clips");
+                var filepath = Path.Combine(_savePath, filename);
+                Directory.CreateDirectory(_savePath);
 
                 // Use FFmpeg for encoding
                 Task.Run(() => EncodeToMp4(frames, filepath));

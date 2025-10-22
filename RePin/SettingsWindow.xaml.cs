@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -22,6 +23,9 @@ namespace RePin
         {
             try
             {
+                // Save path
+                SavePathText.Text = _settings.SavePath;
+
                 // Buffer duration
                 BufferSlider.Value = _settings.BufferSeconds;
                 BufferValueText.Text = $"{_settings.BufferSeconds}s";
@@ -137,6 +141,21 @@ namespace RePin
         {
             try
             {
+                // Save path
+                _settings.SavePath = SavePathText.Text;
+                
+                // Validate save path exists or can be created
+                try
+                {
+                    Directory.CreateDirectory(_settings.SavePath);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Invalid save path: {ex.Message}", "Validation Error",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
                 // Save buffer settings
                 _settings.BufferSeconds = (int)BufferSlider.Value;
                 
@@ -215,6 +234,28 @@ namespace RePin
             SettingsChanged = false;
             DialogResult = false;
             Close();
+        }
+
+        private void BrowseSavePath_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Select Clips Folder",
+                FileName = "SelectFolder",
+                Filter = "Folder|*.none",
+                CheckFileExists = false,
+                CheckPathExists = true
+            };
+
+            // Workaround to select folder using SaveFileDialog
+            if (dialog.ShowDialog() == true)
+            {
+                var folderPath = System.IO.Path.GetDirectoryName(dialog.FileName);
+                if (!string.IsNullOrEmpty(folderPath))
+                {
+                    SavePathText.Text = folderPath;
+                }
+            }
         }
     }
 }

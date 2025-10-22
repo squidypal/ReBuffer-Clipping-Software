@@ -72,7 +72,8 @@ namespace RePin
                 bitrate: _settings.GetBitrateForQuality(),
                 crf: _settings.GetCRFForQuality(),
                 preset: _settings.GetPresetForQuality(),
-                useHardwareEncoding: _settings.UseHardwareEncoding
+                useHardwareEncoding: _settings.UseHardwareEncoding,
+                savePath: _settings.SavePath
             );
 
             await _recorder.StartAsync();
@@ -221,7 +222,7 @@ namespace RePin
 
         private void OpenFolder_Click(object sender, RoutedEventArgs e)
         {
-            var clipsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
+            var clipsFolder = _settings.SavePath;
             Directory.CreateDirectory(clipsFolder);
             
             Process.Start("explorer.exe", clipsFolder);

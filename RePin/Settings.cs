@@ -13,6 +13,7 @@ namespace RePin
         public int CRF { get; set; } = 23;
         public bool UseHardwareEncoding { get; set; } = true;
         public string EncodingPreset { get; set; } = "ultrafast";
+        public string SavePath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
         
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

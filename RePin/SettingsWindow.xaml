@@ -36,6 +36,57 @@
                                    Foreground="#00D9FF"
                                    Margin="0,0,0,15"/>
 
+                        <!-- Save Location -->
+                        <TextBlock Text="Save Location:" 
+                                   Foreground="#CCC" 
+                                   Margin="0,0,0,5"/>
+                        <Grid Margin="0,0,0,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="SavePathText" 
+                                     Grid.Column="0"
+                                     Background="#1E1E1E" 
+                                     Foreground="#CCC"
+                                     BorderBrush="#444"
+                                     Padding="5"
+                                     IsReadOnly="True"
+                                     VerticalContentAlignment="Center"/>
+                            <Button Grid.Column="1"
+                                    Content="Browse..."
+                                    Width="80"
+                                    Height="30"
+                                    Margin="5,0,0,0"
+                                    Background="#444"
+                                    Foreground="White"
+                                    BorderThickness="0"
+                                    Cursor="Hand"
+                                    Click="BrowseSavePath_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border Background="{TemplateBinding Background}"
+                                                            CornerRadius="4"
+                                                            Padding="8,4">
+                                                        <ContentPresenter HorizontalAlignment="Center" 
+                                                                        VerticalAlignment="Center"/>
+                                                    </Border>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="#555"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+
                         <!-- Buffer Duration -->
                         <TextBlock Text="Buffer Duration (seconds):" 
                                    Foreground="#CCC" 
