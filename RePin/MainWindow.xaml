@@ -90,7 +90,7 @@
                     Margin="0,20,0,0">
             <Button x:Name="StartStopButton"
                     Content="⏸ Pause Recording"
-                    Width="150"
+                    Width="130"
                     Height="40"
                     FontSize="14"
                     Background="#FF9800"
@@ -116,6 +116,39 @@
                         <Style.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Background" Value="#FFB133"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <Button Content="⚙️ Settings"
+                    Width="110"
+                    Height="40"
+                    FontSize="14"
+                    Background="#9C27B0"
+                    Foreground="White"
+                    BorderThickness="0"
+                    Cursor="Hand"
+                    Click="Settings_Click"
+                    Margin="0,0,10,0">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="6"
+                                            Padding="10,8">
+                                        <ContentPresenter HorizontalAlignment="Center" 
+                                                        VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#AB47BC"/>
                             </Trigger>
                         </Style.Triggers>
                     </Style>

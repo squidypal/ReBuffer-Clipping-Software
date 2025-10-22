@@ -20,6 +20,9 @@ namespace RePin
         private readonly int _bufferSeconds;
         private readonly int _fps;
         private readonly int _bitrate;
+        private readonly int _crf;
+        private readonly string _preset;
+        private readonly bool _useHardwareEncoding;
         private readonly ConcurrentQueue<FrameData> _frameBuffer;
         private readonly int _maxFrames;
         
@@ -40,11 +43,20 @@ namespace RePin
         public int BufferedFrames => _frameBuffer.Count;
         public double BufferedSeconds => (double)_frameBuffer.Count / _fps;
 
-        public ScreenRecorder(int bufferSeconds = 30, int fps = 60, int bitrate = 8_000_000)
+        public ScreenRecorder(
+            int bufferSeconds = 30, 
+            int fps = 60, 
+            int bitrate = 8_000_000,
+            int crf = 23,
+            string preset = "ultrafast",
+            bool useHardwareEncoding = true)
         {
             _bufferSeconds = bufferSeconds;
             _fps = fps;
             _bitrate = bitrate;
+            _crf = crf;
+            _preset = preset;
+            _useHardwareEncoding = useHardwareEncoding;
             _maxFrames = bufferSeconds * fps;
             _frameBuffer = new ConcurrentQueue<FrameData>();
 
@@ -252,7 +264,7 @@ namespace RePin
                 var filepath = Path.Combine("clips", filename);
                 Directory.CreateDirectory("clips");
 
-                // Use FFmpeg for hardware-accelerated encoding
+                // Use FFmpeg for encoding
                 Task.Run(() => EncodeToMp4(frames, filepath));
 
                 return filename;
@@ -263,10 +275,22 @@ namespace RePin
         {
             try
             {
-                // Use FFmpeg with H.264 hardware encoding (NVENC if available)
+                string codecArgs;
+                
+                if (_useHardwareEncoding)
+                {
+                    // Try NVENC first, fallback to software if not available
+                    codecArgs = $"-c:v h264_nvenc -preset {_preset} -cq {_crf}";
+                }
+                else
+                {
+                    // Software encoding with libx264
+                    codecArgs = $"-c:v libx264 -preset {_preset} -crf {_crf}";
+                }
+
                 var ffmpegArgs = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
                                 $"-framerate {_fps} -i - " +
-                                $"-c:v libx264 -preset ultrafast -crf 23 " +
+                                $"{codecArgs} " +
                                 $"-pix_fmt yuv420p -movflags +faststart " +
                                 $"-y \"{outputPath}\"";
 
@@ -277,6 +301,7 @@ namespace RePin
                     UseShellExecute = false,
                     RedirectStandardInput = true,
                     RedirectStandardError = true,
+                    RedirectStandardOutput = true,
                     CreateNoWindow = true
                 };
 
@@ -292,7 +317,36 @@ namespace RePin
                 }
 
                 stdin.Close();
+                
+                // Read any errors
+                var errors = process.StandardError.ReadToEnd();
                 process.WaitForExit();
+
+                // If hardware encoding failed, try software encoding as fallback
+                if (process.ExitCode != 0 && _useHardwareEncoding && errors.Contains("h264_nvenc"))
+                {
+                    Console.WriteLine("Hardware encoding failed, falling back to software encoding...");
+                    
+                    // Retry with software encoding
+                    var softwareArgs = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
+                                      $"-framerate {_fps} -i - " +
+                                      $"-c:v libx264 -preset {_preset} -crf {_crf} " +
+                                      $"-pix_fmt yuv420p -movflags +faststart " +
+                                      $"-y \"{outputPath}\"";
+
+                    psi.Arguments = softwareArgs;
+                    using var retryProcess = Process.Start(psi);
+                    if (retryProcess != null)
+                    {
+                        using var retryStdin = retryProcess.StandardInput.BaseStream;
+                        foreach (var frame in frames)
+                        {
+                            retryStdin.Write(frame.Data, 0, frame.Data.Length);
+                        }
+                        retryStdin.Close();
+                        retryProcess.WaitForExit();
+                    }
+                }
             }
             catch (Exception ex)
             {

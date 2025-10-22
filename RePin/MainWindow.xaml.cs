@@ -12,10 +12,14 @@ namespace RePin
         private GlobalHotKeyManager? _hotKeyManager;
         private bool _isRecording = true;
         private readonly DispatcherTimer _updateTimer;
+        private Settings _settings;
 
         public MainWindow()
         {
             InitializeComponent();
+            
+            // Load settings
+            _settings = Settings.Load();
             
             _updateTimer = new DispatcherTimer
             {
@@ -33,24 +37,15 @@ namespace RePin
             {
                 LogMessage("Initializing RePin...");
 
-                // Initialize recorder with hardware acceleration
-                _recorder = new ScreenRecorder(
-                    bufferSeconds: 30,
-                    fps: 60,
-                    bitrate: 8_000_000
-                );
-
-                await _recorder.StartAsync();
-                LogMessage("✓ Screen capture started (Hardware accelerated)");
-                LogMessage($"✓ Resolution: {_recorder.Width}x{_recorder.Height} @ 60 FPS");
-                LogMessage($"✓ Buffer size: ~{_recorder.EstimateMemoryMB():F1} MB");
+                // Initialize recorder with settings
+                await InitializeRecorder();
 
                 // Setup F8 hotkey
                 _hotKeyManager = new GlobalHotKeyManager();
                 _hotKeyManager.RegisterF8Callback(OnF8Pressed);
                 LogMessage("✓ F8 hotkey registered");
                 LogMessage("");
-                LogMessage("Ready! Press F8 to save the last 30 seconds.");
+                LogMessage($"Ready! Press F8 to save the last {_settings.BufferSeconds} seconds.");
 
                 _updateTimer.Start();
             }
@@ -60,6 +55,36 @@ namespace RePin
                 MessageBox.Show($"Failed to initialize: {ex.Message}", "Error", 
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private async System.Threading.Tasks.Task InitializeRecorder()
+        {
+            // Dispose old recorder if exists
+            if (_recorder != null)
+            {
+                _recorder.Dispose();
+                _recorder = null;
+            }
+
+            _recorder = new ScreenRecorder(
+                bufferSeconds: _settings.BufferSeconds,
+                fps: _settings.FrameRate,
+                bitrate: _settings.GetBitrateForQuality(),
+                crf: _settings.GetCRFForQuality(),
+                preset: _settings.GetPresetForQuality(),
+                useHardwareEncoding: _settings.UseHardwareEncoding
+            );
+
+            await _recorder.StartAsync();
+            
+            var encodingType = _settings.UseHardwareEncoding ? "Hardware accelerated" : "Software encoding";
+            LogMessage($"✓ Screen capture started ({encodingType})");
+            LogMessage($"✓ Resolution: {_recorder.Width}x{_recorder.Height} @ {_settings.FrameRate} FPS");
+            LogMessage($"✓ Buffer size: ~{_recorder.EstimateMemoryMB():F1} MB");
+            LogMessage($"✓ Quality: {_settings.Quality} ({_settings.GetBitrateForQuality() / 1_000_000} Mbps)");
+            
+            // Update status text
+            InfoText.Text = $"Buffer: {_settings.BufferSeconds} seconds @ {_settings.FrameRate} FPS";
         }
 
         private void UpdateTimer_Tick(object? sender, EventArgs e)
@@ -107,7 +132,7 @@ namespace RePin
         {
             var originalBg = Background;
             Background = System.Windows.Media.Brushes.Green;
-            await Task.Delay(100);
+            await System.Threading.Tasks.Task.Delay(100);
             Background = originalBg;
         }
 
@@ -147,6 +172,50 @@ namespace RePin
                 StatusText.Text = "⏸ Recording Paused";
                 StatusText.Foreground = System.Windows.Media.Brushes.Orange;
                 LogMessage("Recording paused");
+            }
+        }
+
+        private async void Settings_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var settingsWindow = new SettingsWindow(_settings);
+                var result = settingsWindow.ShowDialog();
+
+                if (result == true && settingsWindow.SettingsChanged)
+                {
+                    LogMessage("Settings changed - restarting recorder...");
+                    
+                    var wasRecording = _isRecording;
+                    
+                    // Stop recording temporarily
+                    if (_isRecording)
+                    {
+                        _recorder?.Pause();
+                        _isRecording = false;
+                    }
+
+                    // Reinitialize with new settings
+                    await InitializeRecorder();
+
+                    // Resume if it was recording before
+                    if (wasRecording)
+                    {
+                        await _recorder!.StartAsync();
+                        _isRecording = true;
+                        StartStopButton.Content = "⏸ Pause Recording";
+                        StatusText.Text = "⏺ Recording Active";
+                        StatusText.Foreground = System.Windows.Media.Brushes.LimeGreen;
+                    }
+
+                    LogMessage("✓ Settings applied successfully");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"✗ Error opening settings: {ex.Message}");
+                MessageBox.Show($"Failed to open settings: {ex.Message}\n\nStack trace:\n{ex.StackTrace}", 
+                    "Settings Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
