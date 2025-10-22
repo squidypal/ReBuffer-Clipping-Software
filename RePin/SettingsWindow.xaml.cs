@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using MessageBox = System.Windows.MessageBox;
 
 namespace RePin
 {
@@ -111,25 +112,15 @@ namespace RePin
 
                 int fps = int.Parse(selectedItem.Tag.ToString()!);
                 
-                // Estimate: 1920x1080x4 bytes per frame (BGRA)
-                // Adjust for typical screen resolution
+                // Note: With adaptive pool, actual memory will be much lower
+                // This shows theoretical maximum if all frames were unique
+                int maxFrames = 100; // Adaptive pool limit
                 long bytesPerFrame = 1920 * 1080 * 4;
-                long totalFrames = bufferSeconds * fps;
-                double memoryMB = (bytesPerFrame * totalFrames) / (1024.0 * 1024.0);
+                double memoryMB = (bytesPerFrame * maxFrames) / (1024.0 * 1024.0);
 
-                MemoryEstimateText.Text = $"Estimated memory: ~{memoryMB:F0} MB";
-
-                // Add warning for very high memory usage
-                if (memoryMB > 1000)
-                {
-                    MemoryEstimateText.Text += " ⚠️ High memory usage!";
-                    MemoryEstimateText.Foreground = System.Windows.Media.Brushes.Orange;
-                }
-                else
-                {
-                    MemoryEstimateText.Foreground = new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(0x88, 0x88, 0x88));
-                }
+                MemoryEstimateText.Text = $"Max memory: ~{memoryMB:F0} MB (adaptive pool)";
+                MemoryEstimateText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x88, 0x88, 0x88));
             }
             catch
             {

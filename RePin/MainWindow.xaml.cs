@@ -3,23 +3,27 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
+using MessageBox = System.Windows.MessageBox;
 
 namespace RePin
 {
     public partial class MainWindow : Window
     {
         private ScreenRecorder? _recorder;
-        private GlobalHotKeyManager? _hotKeyManager;
-        private bool _isRecording = true;
-        private readonly DispatcherTimer _updateTimer;
         private Settings _settings;
+        private bool _isRecording;
+        private readonly DispatcherTimer _updateTimer;
 
-        public MainWindow()
+        public event Action<bool>? RecordingToggled;
+        public event Action? SettingsChanged;
+
+        public MainWindow(ScreenRecorder? recorder, Settings settings, bool isRecording)
         {
             InitializeComponent();
             
-            // Load settings
-            _settings = Settings.Load();
+            _recorder = recorder;
+            _settings = settings;
+            _isRecording = isRecording;
             
             _updateTimer = new DispatcherTimer
             {
@@ -31,61 +35,39 @@ namespace RePin
             Closing += MainWindow_Closing;
         }
 
-        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                LogMessage("Initializing RePin...");
+            UpdateUI();
+            
+            LogMessage("Dashboard opened");
+            LogMessage($"Buffer: {_settings.BufferSeconds}s @ {_settings.FrameRate} FPS");
+            LogMessage($"Quality: {_settings.Quality}");
+            LogMessage("");
+            LogMessage("Press F8 to save clips");
+            LogMessage("Minimize to system tray to run in background");
 
-                // Initialize recorder with settings
-                await InitializeRecorder();
-
-                // Setup F8 hotkey
-                _hotKeyManager = new GlobalHotKeyManager();
-                _hotKeyManager.RegisterF8Callback(OnF8Pressed);
-                LogMessage("✓ F8 hotkey registered");
-                LogMessage("");
-                LogMessage($"Ready! Press F8 to save the last {_settings.BufferSeconds} seconds.");
-
-                _updateTimer.Start();
-            }
-            catch (Exception ex)
-            {
-                LogMessage($"ERROR: {ex.Message}");
-                MessageBox.Show($"Failed to initialize: {ex.Message}", "Error", 
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            _updateTimer.Start();
         }
 
-        private async System.Threading.Tasks.Task InitializeRecorder()
+        private void UpdateUI()
         {
-            // Dispose old recorder if exists
-            if (_recorder != null)
+            if (_isRecording)
             {
-                _recorder.Dispose();
-                _recorder = null;
+                StartStopButton.Content = "⏸ Pause Recording";
+                StatusText.Text = "⏺ Recording Active";
+                StatusText.Foreground = System.Windows.Media.Brushes.LimeGreen;
+            }
+            else
+            {
+                StartStopButton.Content = "▶ Resume Recording";
+                StatusText.Text = "⏸ Recording Paused";
+                StatusText.Foreground = System.Windows.Media.Brushes.Orange;
             }
 
-            _recorder = new ScreenRecorder(
-                bufferSeconds: _settings.BufferSeconds,
-                fps: _settings.FrameRate,
-                bitrate: _settings.GetBitrateForQuality(),
-                crf: _settings.GetCRFForQuality(),
-                preset: _settings.GetPresetForQuality(),
-                useHardwareEncoding: _settings.UseHardwareEncoding,
-                savePath: _settings.SavePath
-            );
-
-            await _recorder.StartAsync();
-            
-            var encodingType = _settings.UseHardwareEncoding ? "Hardware accelerated" : "Software encoding";
-            LogMessage($"✓ Screen capture started ({encodingType})");
-            LogMessage($"✓ Resolution: {_recorder.Width}x{_recorder.Height} @ {_settings.FrameRate} FPS");
-            LogMessage($"✓ Buffer size: ~{_recorder.EstimateMemoryMB():F1} MB");
-            LogMessage($"✓ Quality: {_settings.Quality} ({_settings.GetBitrateForQuality() / 1_000_000} Mbps)");
-            
-            // Update status text
-            InfoText.Text = $"Buffer: {_settings.BufferSeconds} seconds @ {_settings.FrameRate} FPS";
+            if (_recorder != null)
+            {
+                InfoText.Text = $"Buffer: {_settings.BufferSeconds} seconds @ {_settings.FrameRate} FPS";
+            }
         }
 
         private void UpdateTimer_Tick(object? sender, EventArgs e)
@@ -96,54 +78,12 @@ namespace RePin
             }
         }
 
-        private async void OnF8Pressed()
-        {
-            if (_recorder == null || !_isRecording) return;
-
-            await Dispatcher.InvokeAsync(async () =>
-            {
-                var sw = Stopwatch.StartNew();
-                LogMessage($"[{DateTime.Now:HH:mm:ss}] F8 pressed - Saving clip...");
-
-                try
-                {
-                    var filename = await _recorder.SaveClipAsync();
-                    sw.Stop();
-
-                    if (!string.IsNullOrEmpty(filename))
-                    {
-                        LogMessage($"✓ Saved: {filename} ({sw.ElapsedMilliseconds}ms)");
-                        
-                        // Flash the window
-                        FlashWindow();
-                    }
-                    else
-                    {
-                        LogMessage("⚠ No frames in buffer to save");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($"✗ Error saving clip: {ex.Message}");
-                }
-            });
-        }
-
-        private async void FlashWindow()
-        {
-            var originalBg = Background;
-            Background = System.Windows.Media.Brushes.Green;
-            await System.Threading.Tasks.Task.Delay(100);
-            Background = originalBg;
-        }
-
         private void LogMessage(string message)
         {
             Dispatcher.Invoke(() =>
             {
                 LogText.Text += $"{message}\n";
                 
-                // Auto-scroll to bottom
                 var parent = LogText.Parent;
                 if (parent is System.Windows.Controls.ScrollViewer scrollViewer)
                 {
@@ -152,31 +92,16 @@ namespace RePin
             });
         }
 
-        private async void StartStopButton_Click(object sender, RoutedEventArgs e)
+        private void StartStopButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_recorder == null) return;
-
             _isRecording = !_isRecording;
-
-            if (_isRecording)
-            {
-                await _recorder.StartAsync();
-                StartStopButton.Content = "⏸ Pause Recording";
-                StatusText.Text = "⏺ Recording Active";
-                StatusText.Foreground = System.Windows.Media.Brushes.LimeGreen;
-                LogMessage("Recording resumed");
-            }
-            else
-            {
-                _recorder.Pause();
-                StartStopButton.Content = "▶ Resume Recording";
-                StatusText.Text = "⏸ Recording Paused";
-                StatusText.Foreground = System.Windows.Media.Brushes.Orange;
-                LogMessage("Recording paused");
-            }
+            UpdateUI();
+            RecordingToggled?.Invoke(_isRecording);
+            
+            LogMessage(_isRecording ? "Recording resumed" : "Recording paused");
         }
 
-        private async void Settings_Click(object sender, RoutedEventArgs e)
+        private void Settings_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -186,36 +111,15 @@ namespace RePin
                 if (result == true && settingsWindow.SettingsChanged)
                 {
                     LogMessage("Settings changed - restarting recorder...");
-                    
-                    var wasRecording = _isRecording;
-                    
-                    // Stop recording temporarily
-                    if (_isRecording)
-                    {
-                        _recorder?.Pause();
-                        _isRecording = false;
-                    }
-
-                    // Reinitialize with new settings
-                    await InitializeRecorder();
-
-                    // Resume if it was recording before
-                    if (wasRecording)
-                    {
-                        await _recorder!.StartAsync();
-                        _isRecording = true;
-                        StartStopButton.Content = "⏸ Pause Recording";
-                        StatusText.Text = "⏺ Recording Active";
-                        StatusText.Foreground = System.Windows.Media.Brushes.LimeGreen;
-                    }
-
+                    SettingsChanged?.Invoke();
+                    UpdateUI();
                     LogMessage("✓ Settings applied successfully");
                 }
             }
             catch (Exception ex)
             {
                 LogMessage($"✗ Error opening settings: {ex.Message}");
-                MessageBox.Show($"Failed to open settings: {ex.Message}\n\nStack trace:\n{ex.StackTrace}", 
+                MessageBox.Show($"Failed to open settings: {ex.Message}", 
                     "Settings Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -232,8 +136,21 @@ namespace RePin
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             _updateTimer?.Stop();
-            _hotKeyManager?.Dispose();
-            _recorder?.Dispose();
+            
+            // Don't actually close, just hide
+            e.Cancel = true;
+            Hide();
+            LogMessage("Dashboard minimized to system tray");
+        }
+
+        protected override void OnStateChanged(EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                Hide();
+            }
+
+            base.OnStateChanged(e);
         }
     }
 }
