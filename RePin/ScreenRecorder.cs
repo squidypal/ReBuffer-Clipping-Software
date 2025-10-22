@@ -15,8 +15,7 @@ namespace RePin
 {
     /// <summary>
     /// High-performance screen recorder with real-time H.264 compression
-    /// Memory target: ~500MB for 30s @ 1440p60
-    /// Zero frame skipping with precise timing
+    /// Fixed to ensure proper MP4 file generation
     /// </summary>
     public class ScreenRecorder : IDisposable
     {
@@ -37,15 +36,12 @@ namespace RePin
         private int _height;
         private int _bytesPerFrame;
         
-        // Real-time encoding pipeline
-        private Process? _ffmpegProcess;
-        private Stream? _ffmpegInput;
-        private readonly BlockingCollection<CompressedFrame> _compressedBuffer;
-        private readonly int _maxCompressedFrames;
+        // Frame buffering - store raw frames for reliability
+        private readonly ConcurrentQueue<RawFrame> _frameBuffer;
+        private readonly int _maxBufferFrames;
         
         // Timing & threading
         private Task? _captureTask;
-        private Task? _compressionMonitorTask;
         private CancellationTokenSource? _cts;
         private bool _isRecording;
         private readonly Stopwatch _frameTimer = new();
@@ -53,13 +49,11 @@ namespace RePin
         
         // Performance monitoring
         private long _totalFramesCaptured = 0;
-        private long _droppedFrames = 0;
-        private long _totalCompressedBytes = 0;
         private readonly object _statsLock = new();
 
         public int Width => _width;
         public int Height => _height;
-        public int BufferedFrames => _compressedBuffer.Count;
+        public int BufferedFrames => _frameBuffer.Count;
         public double BufferedSeconds => (double)BufferedFrames / _fps;
 
         public ScreenRecorder(
@@ -79,8 +73,8 @@ namespace RePin
             _useHardwareEncoding = useHardwareEncoding;
             _savePath = savePath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
             
-            _maxCompressedFrames = bufferSeconds * fps;
-            _compressedBuffer = new BlockingCollection<CompressedFrame>(_maxCompressedFrames);
+            _maxBufferFrames = bufferSeconds * fps;
+            _frameBuffer = new ConcurrentQueue<RawFrame>();
             
             InitializeCapture();
         }
@@ -119,16 +113,14 @@ namespace RePin
             _stagingTexture = new Texture2D(_device, textureDesc);
 
             Console.WriteLine($"✓ Capture initialized: {_width}x{_height} @ {_fps} FPS");
-            Console.WriteLine($"✓ Target memory: ~{EstimateMemoryMB():F0} MB (compressed)");
+            Console.WriteLine($"✓ Target memory: ~{EstimateMemoryMB():F0} MB");
         }
 
         public double EstimateMemoryMB()
         {
-            // Estimate H.264 compressed size
-            // Typical compression: 1440p60 @ 8Mbps ≈ 1MB/s → 30MB for 30s
-            // Add 20% overhead for buffer management
-            double compressedMBPerSecond = (_bitrate / 8.0) / (1024.0 * 1024.0);
-            return compressedMBPerSecond * _bufferSeconds * 1.2;
+            // Raw frame buffer estimation
+            double rawMB = (_bytesPerFrame * _maxBufferFrames) / (1024.0 * 1024.0);
+            return rawMB;
         }
 
         public async Task StartAsync()
@@ -138,56 +130,18 @@ namespace RePin
             _isRecording = true;
             _cts = new CancellationTokenSource();
             
-            // Start FFmpeg encoder in streaming mode
-            StartFFmpegEncoder();
-            
             // Start capture loop with precise timing
             _frameTimer.Restart();
             _frameNumber = 0;
             _captureTask = Task.Factory.StartNew(
                 () => CaptureLoop(_cts.Token), 
                 TaskCreationOptions.LongRunning);
-            
-            // Monitor compression and maintain buffer
-            _compressionMonitorTask = Task.Factory.StartNew(
-                () => CompressionMonitorLoop(_cts.Token),
-                TaskCreationOptions.LongRunning);
 
             await Task.CompletedTask;
         }
 
-        private void StartFFmpegEncoder()
-        {
-            // Real-time encoding with minimal latency
-            string codecArgs = _useHardwareEncoding
-                ? $"-c:v h264_nvenc -preset p1 -tune ll -zerolatency 1 -b:v {_bitrate} -maxrate {_bitrate} -bufsize {_bitrate / 2}"
-                : $"-c:v libx264 -preset ultrafast -tune zerolatency -b:v {_bitrate} -maxrate {_bitrate} -bufsize {_bitrate / 2}";
-
-            var args = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
-                      $"-framerate {_fps} -i - {codecArgs} " +
-                      $"-f h264 -framerate {_fps} pipe:1";
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = args,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = false,
-                CreateNoWindow = true
-            };
-
-            _ffmpegProcess = Process.Start(psi);
-            _ffmpegInput = _ffmpegProcess!.StandardInput.BaseStream;
-            
-            Console.WriteLine("✓ FFmpeg encoder started (real-time mode)");
-        }
-
         private void CaptureLoop(CancellationToken cancellationToken)
         {
-            // Pre-allocate frame buffer (reused)
-            byte[] frameBuffer = new byte[_bytesPerFrame];
             byte[]? lastValidFrame = null;
             
             long targetTicks = Stopwatch.Frequency / _fps;
@@ -208,7 +162,7 @@ namespace RePin
                     if (currentTicks < nextFrameTicks)
                     {
                         long ticksToWait = nextFrameTicks - currentTicks;
-                        if (ticksToWait > targetTicks / 10) // Only sleep if >10% of frame time
+                        if (ticksToWait > targetTicks / 10)
                         {
                             Thread.Sleep((int)((ticksToWait * 1000) / Stopwatch.Frequency));
                         }
@@ -216,34 +170,32 @@ namespace RePin
                     }
                     
                     // Capture frame
-                    bool captured = TryCaptureFrameFast(frameBuffer);
+                    byte[]? frameData = TryCaptureFrame();
                     
-                    if (captured)
+                    if (frameData != null)
                     {
-                        // New frame - send to encoder
-                        _ffmpegInput?.Write(frameBuffer, 0, _bytesPerFrame);
-                        lastValidFrame = (byte[])frameBuffer.Clone();
+                        // New frame captured
+                        lastValidFrame = frameData;
                         _totalFramesCaptured++;
                         consecutiveDrops = 0;
+                        
+                        AddFrameToBuffer(frameData);
                     }
                     else if (lastValidFrame != null)
                     {
                         // No new frame - repeat last frame
-                        _ffmpegInput?.Write(lastValidFrame, 0, _bytesPerFrame);
                         consecutiveDrops++;
                         
-                        if (consecutiveDrops >= MAX_CONSECUTIVE_DROPS)
+                        if (consecutiveDrops < MAX_CONSECUTIVE_DROPS)
                         {
-                            // Screen idle - no need to spam warnings
-                            consecutiveDrops = 0;
+                            byte[] duplicateFrame = new byte[lastValidFrame.Length];
+                            Array.Copy(lastValidFrame, duplicateFrame, lastValidFrame.Length);
+                            AddFrameToBuffer(duplicateFrame);
                         }
-                    }
-                    else
-                    {
-                        // No frames available yet - send black frame
-                        Array.Clear(frameBuffer, 0, _bytesPerFrame);
-                        _ffmpegInput?.Write(frameBuffer, 0, _bytesPerFrame);
-                        _droppedFrames++;
+                        else
+                        {
+                            consecutiveDrops = 0; // Reset to avoid spam
+                        }
                     }
                     
                     _frameNumber++;
@@ -267,17 +219,8 @@ namespace RePin
                         double actualFps = _frameNumber / elapsed;
                         double captureRate = (_totalFramesCaptured / (double)_frameNumber) * 100;
                         
-                        lock (_statsLock)
-                        {
-                            double compressedMB = _totalCompressedBytes / (1024.0 * 1024.0);
-                            double compressionRatio = _totalCompressedBytes > 0 
-                                ? (_frameNumber * _bytesPerFrame) / (double)_totalCompressedBytes 
-                                : 0;
-                            
-                            Console.WriteLine($"📊 {_frameNumber} frames | FPS: {actualFps:F1} | " +
-                                            $"Captured: {captureRate:F1}% | Buffer: {_compressedBuffer.Count} | " +
-                                            $"Compressed: {compressedMB:F1}MB ({compressionRatio:F0}x)");
-                        }
+                        Console.WriteLine($"📊 {_frameNumber} frames | FPS: {actualFps:F1} | " +
+                                        $"Captured: {captureRate:F1}% | Buffer: {_frameBuffer.Count}");
                     }
                 }
                 catch (Exception ex)
@@ -290,10 +233,28 @@ namespace RePin
             Console.WriteLine($"✓ Capture stopped: {_frameNumber} frames captured");
         }
 
-        private bool TryCaptureFrameFast(byte[] buffer)
+        private void AddFrameToBuffer(byte[] frameData)
+        {
+            var frame = new RawFrame
+            {
+                Data = frameData,
+                FrameNumber = _frameNumber,
+                Timestamp = DateTime.UtcNow
+            };
+
+            _frameBuffer.Enqueue(frame);
+
+            // Maintain circular buffer
+            while (_frameBuffer.Count > _maxBufferFrames)
+            {
+                _frameBuffer.TryDequeue(out _);
+            }
+        }
+
+        private byte[]? TryCaptureFrame()
         {
             if (_duplicatedOutput == null || _device == null || _stagingTexture == null)
-                return false;
+                return null;
 
             SharpDX.DXGI.Resource? screenResource = null;
             
@@ -303,7 +264,7 @@ namespace RePin
                 var result = _duplicatedOutput.TryAcquireNextFrame(0, out var frameInfo, out screenResource);
                 
                 if (result.Failure || screenResource == null)
-                    return false;
+                    return null;
 
                 // Fast GPU copy
                 using var screenTexture = screenResource.QueryInterface<Texture2D>();
@@ -315,8 +276,9 @@ namespace RePin
 
                 try
                 {
+                    byte[] buffer = new byte[_bytesPerFrame];
                     Marshal.Copy(dataBox.DataPointer, buffer, 0, _bytesPerFrame);
-                    return true;
+                    return buffer;
                 }
                 finally
                 {
@@ -325,60 +287,12 @@ namespace RePin
             }
             catch
             {
-                return false;
+                return null;
             }
             finally
             {
                 screenResource?.Dispose();
                 try { _duplicatedOutput?.ReleaseFrame(); } catch { }
-            }
-        }
-
-        private void CompressionMonitorLoop(CancellationToken cancellationToken)
-        {
-            // Read compressed H.264 data from FFmpeg output
-            byte[] readBuffer = new byte[256 * 1024]; // 256KB chunks
-            long frameCounter = 0;
-
-            try
-            {
-                var outputStream = _ffmpegProcess?.StandardOutput.BaseStream;
-                if (outputStream == null) return;
-
-                while (!cancellationToken.IsCancellationRequested && _ffmpegProcess?.HasExited == false)
-                {
-                    int bytesRead = outputStream.Read(readBuffer, 0, readBuffer.Length);
-                    if (bytesRead > 0)
-                    {
-                        // Store compressed frame
-                        byte[] compressed = new byte[bytesRead];
-                        Array.Copy(readBuffer, compressed, bytesRead);
-                        
-                        var frame = new CompressedFrame
-                        {
-                            Data = compressed,
-                            FrameNumber = frameCounter++,
-                            Timestamp = DateTime.UtcNow
-                        };
-
-                        // Maintain circular buffer
-                        if (_compressedBuffer.Count >= _maxCompressedFrames)
-                        {
-                            _compressedBuffer.TryTake(out _); // Remove oldest
-                        }
-                        
-                        _compressedBuffer.TryAdd(frame);
-                        
-                        lock (_statsLock)
-                        {
-                            _totalCompressedBytes += bytesRead;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠ Compression monitor error: {ex.Message}");
             }
         }
 
@@ -390,7 +304,7 @@ namespace RePin
 
         public async Task<string> SaveClipAsync()
         {
-            if (_compressedBuffer.Count == 0)
+            if (_frameBuffer.IsEmpty)
             {
                 Console.WriteLine("! No frames in buffer");
                 return string.Empty;
@@ -400,53 +314,76 @@ namespace RePin
             var filepath = Path.Combine(_savePath, filename);
             Directory.CreateDirectory(_savePath);
 
-            Console.WriteLine($"💾 Saving {_compressedBuffer.Count} compressed frames...");
+            var frames = _frameBuffer.ToArray();
+            Console.WriteLine($"💾 Saving {frames.Length} frames...");
             
-            await Task.Run(() => SaveCompressedClip(filepath));
+            await Task.Run(() => SaveClipDirect(filepath, frames));
             
             return filename;
         }
 
-        private void SaveCompressedClip(string outputPath)
+        private void SaveClipDirect(string outputPath, RawFrame[] frames)
         {
             try
             {
                 var sw = Stopwatch.StartNew();
                 
-                // Copy compressed frames
-                var frames = _compressedBuffer.ToArray();
-                
-                // Remux to MP4 container (ultra-fast, no re-encoding)
+                // Build FFmpeg command for direct encoding
+                string codecArgs = _useHardwareEncoding
+                    ? $"-c:v h264_nvenc -preset p4 -b:v {_bitrate} -maxrate {_bitrate} -bufsize {_bitrate * 2}"
+                    : $"-c:v libx264 -preset {_preset} -crf {_crf} -b:v {_bitrate} -maxrate {_bitrate} -bufsize {_bitrate * 2}";
+
                 var psi = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
-                    Arguments = $"-f h264 -framerate {_fps} -i - -c:v copy " +
-                              $"-movflags +faststart -y \"{outputPath}\"",
+                    Arguments = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
+                              $"-framerate {_fps} -i pipe:0 {codecArgs} " +
+                              $"-movflags +faststart -pix_fmt yuv420p -y \"{outputPath}\"",
                     UseShellExecute = false,
                     RedirectStandardInput = true,
+                    RedirectStandardOutput = false,
                     RedirectStandardError = false,
                     CreateNoWindow = true
                 };
 
                 using var process = Process.Start(psi);
-                if (process == null) return;
-
-                using var stdin = process.StandardInput.BaseStream;
-                foreach (var frame in frames)
+                if (process == null)
                 {
-                    stdin.Write(frame.Data, 0, frame.Data.Length);
+                    Console.WriteLine("❌ Failed to start FFmpeg");
+                    return;
                 }
-                stdin.Close();
 
-                process.WaitForExit();
+                using (var stdin = process.StandardInput.BaseStream)
+                {
+                    foreach (var frame in frames)
+                    {
+                        stdin.Write(frame.Data, 0, frame.Data.Length);
+                    }
+                    stdin.Flush();
+                }
+
+                // Wait for FFmpeg to finish encoding
+                bool completed = process.WaitForExit(30000); // 30 second timeout
+                
+                if (!completed)
+                {
+                    Console.WriteLine("⚠ FFmpeg encoding timeout, killing process");
+                    try { process.Kill(); } catch { }
+                    return;
+                }
+
                 sw.Stop();
 
-                if (process.ExitCode == 0)
+                if (process.ExitCode == 0 && File.Exists(outputPath))
                 {
                     var fileInfo = new FileInfo(outputPath);
                     Console.WriteLine($"✓ Clip saved in {sw.ElapsedMilliseconds}ms");
                     Console.WriteLine($"  Duration: {frames.Length / (double)_fps:F1}s | " +
                                     $"Size: {fileInfo.Length / (1024.0 * 1024.0):F2} MB");
+                }
+                else
+                {
+                    Console.WriteLine($"❌ FFmpeg failed with exit code: {process.ExitCode}");
                 }
             }
             catch (Exception ex)
@@ -462,19 +399,11 @@ namespace RePin
             
             // Stop capture
             _captureTask?.Wait(2000);
-            _compressionMonitorTask?.Wait(2000);
             
-            // Stop FFmpeg
-            try
-            {
-                _ffmpegInput?.Close();
-                _ffmpegProcess?.Kill();
-                _ffmpegProcess?.WaitForExit(1000);
-            }
-            catch { }
+            // Clear buffer to free memory
+            while (_frameBuffer.TryDequeue(out _)) { }
             
-            // Cleanup
-            _compressedBuffer?.Dispose();
+            // Cleanup DirectX resources
             _duplicatedOutput?.Dispose();
             _stagingTexture?.Dispose();
             _device?.Dispose();
@@ -484,7 +413,7 @@ namespace RePin
         }
     }
 
-    public class CompressedFrame
+    public class RawFrame
     {
         public byte[] Data { get; set; } = Array.Empty<byte>();
         public long FrameNumber { get; set; }
