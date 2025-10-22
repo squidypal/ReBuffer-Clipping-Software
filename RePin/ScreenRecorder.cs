@@ -131,28 +131,59 @@ namespace RePin
         private void CaptureLoop(CancellationToken cancellationToken)
         {
             var frameInterval = TimeSpan.FromSeconds(1.0 / _fps);
-            var sw = Stopwatch.StartNew();
-            long frameCount = 0;
+            var nextFrameTime = DateTime.UtcNow;
+            long framesCaptured = 0;
+            long framesSkipped = 0;
 
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    var targetTime = TimeSpan.FromTicks(frameCount * frameInterval.Ticks);
-                    var elapsed = sw.Elapsed;
-
-                    if (elapsed < targetTime)
+                    var now = DateTime.UtcNow;
+                    
+                    // Sleep until next frame is due
+                    if (now < nextFrameTime)
                     {
-                        var sleepTime = targetTime - elapsed;
+                        var sleepTime = nextFrameTime - now;
                         if (sleepTime.TotalMilliseconds > 1)
                         {
                             Thread.Sleep((int)sleepTime.TotalMilliseconds);
                         }
+                        else
+                        {
+                            Thread.SpinWait(100); // Spin for very short waits
+                        }
                         continue;
                     }
 
-                    CaptureFrame();
-                    frameCount++;
+                    // Capture the frame
+                    bool captured = CaptureFrame();
+                    
+                    if (captured)
+                    {
+                        framesCaptured++;
+                    }
+                    else
+                    {
+                        framesSkipped++;
+                        // Log occasional skips
+                        if (framesSkipped % 60 == 0)
+                        {
+                            Console.WriteLine($"⚠ Frames skipped: {framesSkipped} (captured: {framesCaptured})");
+                        }
+                    }
+                    
+                    // Schedule next frame
+                    nextFrameTime += frameInterval;
+                    
+                    // If we've fallen too far behind (more than 1 second), reset timing
+                    if (nextFrameTime < now - TimeSpan.FromSeconds(1))
+                    {
+                        Console.WriteLine("⚠ Frame timing reset - fell too far behind");
+                        nextFrameTime = now;
+                        framesSkipped = 0;
+                        framesCaptured = 0;
+                    }
 
                     // Maintain buffer size
                     while (_frameBuffer.Count > _maxFrames)
@@ -165,13 +196,15 @@ namespace RePin
                 }
                 catch (SharpDXException ex) when (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)
                 {
-                    // No new frame, continue
+                    // No new frame available, continue
                     continue;
                 }
                 catch (SharpDXException ex) when (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Result.Code)
                 {
                     // Display mode changed, reinitialize
+                    Console.WriteLine("Display mode changed, reinitializing...");
                     ReinitializeCapture();
+                    nextFrameTime = DateTime.UtcNow; // Reset timing after reinit
                 }
                 catch (Exception ex)
                 {
@@ -179,12 +212,14 @@ namespace RePin
                     Thread.Sleep(100);
                 }
             }
+            
+            Console.WriteLine($"Capture stopped. Total frames captured: {framesCaptured}, skipped: {framesSkipped}");
         }
 
-        private void CaptureFrame()
+        private bool CaptureFrame()
         {
             if (_duplicatedOutput == null || _device == null || _stagingTexture == null)
-                return;
+                return false;
 
             SharpDX.DXGI.Resource? screenResource = null;
             OutputDuplicateFrameInformation frameInfo;
@@ -195,7 +230,7 @@ namespace RePin
                 var result = _duplicatedOutput.TryAcquireNextFrame(0, out frameInfo, out screenResource);
                 
                 if (result.Failure || screenResource == null)
-                    return;
+                    return false;
 
                 using var screenTexture = screenResource.QueryInterface<Texture2D>();
                 
@@ -214,7 +249,7 @@ namespace RePin
                     // Copy frame data
                     var frameData = new FrameData
                     {
-                        Timestamp = DateTime.Now,
+                        Timestamp = DateTime.UtcNow, // Use UTC for consistent timing
                         Width = _width,
                         Height = _height,
                         Data = new byte[_height * dataBox.RowPitch]
@@ -224,6 +259,7 @@ namespace RePin
                     frameData.Stride = dataBox.RowPitch;
 
                     _frameBuffer.Enqueue(frameData);
+                    return true;
                 }
                 finally
                 {
@@ -267,6 +303,8 @@ namespace RePin
                 var filepath = Path.Combine(_savePath, filename);
                 Directory.CreateDirectory(_savePath);
 
+                Console.WriteLine($"Encoding {frames.Length} frames...");
+
                 // Use FFmpeg for encoding
                 Task.Run(() => EncodeToMp4(frames, filepath));
 
@@ -291,9 +329,11 @@ namespace RePin
                     codecArgs = $"-c:v libx264 -preset {_preset} -crf {_crf}";
                 }
 
+                // IMPORTANT: Use -vsync cfr to ensure constant frame rate output
                 var ffmpegArgs = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
                                 $"-framerate {_fps} -i - " +
                                 $"{codecArgs} " +
+                                $"-vsync cfr " + // Force constant frame rate
                                 $"-pix_fmt yuv420p -movflags +faststart " +
                                 $"-y \"{outputPath}\"";
 
@@ -313,6 +353,8 @@ namespace RePin
 
                 using var stdin = process.StandardInput.BaseStream;
 
+                var sw = Stopwatch.StartNew();
+
                 // Write frames to FFmpeg
                 foreach (var frame in frames)
                 {
@@ -325,6 +367,9 @@ namespace RePin
                 var errors = process.StandardError.ReadToEnd();
                 process.WaitForExit();
 
+                sw.Stop();
+                Console.WriteLine($"Encoding completed in {sw.ElapsedMilliseconds}ms");
+
                 // If hardware encoding failed, try software encoding as fallback
                 if (process.ExitCode != 0 && _useHardwareEncoding && errors.Contains("h264_nvenc"))
                 {
@@ -334,6 +379,7 @@ namespace RePin
                     var softwareArgs = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
                                       $"-framerate {_fps} -i - " +
                                       $"-c:v libx264 -preset {_preset} -crf {_crf} " +
+                                      $"-vsync cfr " +
                                       $"-pix_fmt yuv420p -movflags +faststart " +
                                       $"-y \"{outputPath}\"";
 
@@ -349,6 +395,10 @@ namespace RePin
                         retryStdin.Close();
                         retryProcess.WaitForExit();
                     }
+                }
+                else if (process.ExitCode != 0)
+                {
+                    Console.WriteLine($"FFmpeg error: {errors}");
                 }
             }
             catch (Exception ex)
