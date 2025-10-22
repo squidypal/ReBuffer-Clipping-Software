@@ -1,0 +1,158 @@
+<Window x:Class="RePin.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="RePin - Screen Clipper" 
+        Height="450" 
+        Width="600"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanMinimize"
+        Background="#1E1E1E">
+    
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="RePin" 
+                       FontSize="32" 
+                       FontWeight="Bold" 
+                       Foreground="#00D9FF"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="No bullshit clipping" 
+                       FontSize="14" 
+                       Foreground="#888"
+                       HorizontalAlignment="Center"
+                       Margin="0,5,0,0"/>
+        </StackPanel>
+
+        <!-- Status Panel -->
+        <Border Grid.Row="1" 
+                Background="#2D2D2D" 
+                CornerRadius="8" 
+                Padding="15"
+                Margin="0,0,0,20">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock x:Name="StatusText" 
+                               Text="⏺ Recording Active" 
+                               FontSize="16" 
+                               FontWeight="SemiBold"
+                               Foreground="#4CAF50"/>
+                    <TextBlock x:Name="InfoText" 
+                               Text="Buffer: 30 seconds @ 60 FPS" 
+                               FontSize="12" 
+                               Foreground="#AAA"
+                               Margin="0,5,0,0"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                    <TextBlock Text="Press F8" 
+                               FontSize="24" 
+                               FontWeight="Bold"
+                               Foreground="#00D9FF"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="to save clip" 
+                               FontSize="11" 
+                               Foreground="#888"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Activity Log -->
+        <Border Grid.Row="2" 
+                Background="#2D2D2D" 
+                CornerRadius="8" 
+                Padding="10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="LogText" 
+                           FontFamily="Consolas" 
+                           FontSize="11" 
+                           Foreground="#CCC"
+                           TextWrapping="Wrap"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Control Buttons -->
+        <StackPanel Grid.Row="3" 
+                    Orientation="Horizontal" 
+                    HorizontalAlignment="Center"
+                    Margin="0,20,0,0">
+            <Button x:Name="StartStopButton"
+                    Content="⏸ Pause Recording"
+                    Width="150"
+                    Height="40"
+                    FontSize="14"
+                    Background="#FF9800"
+                    Foreground="White"
+                    BorderThickness="0"
+                    Cursor="Hand"
+                    Click="StartStopButton_Click"
+                    Margin="0,0,10,0">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="6"
+                                            Padding="10,8">
+                                        <ContentPresenter HorizontalAlignment="Center" 
+                                                        VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FFB133"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <Button Content="📁 Open Clips Folder"
+                    Width="150"
+                    Height="40"
+                    FontSize="14"
+                    Background="#2196F3"
+                    Foreground="White"
+                    BorderThickness="0"
+                    Cursor="Hand"
+                    Click="OpenFolder_Click">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="6"
+                                            Padding="10,8">
+                                        <ContentPresenter HorizontalAlignment="Center" 
+                                                        VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#42A5F5"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>
