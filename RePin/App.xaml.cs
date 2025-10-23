@@ -5,7 +5,7 @@ using System.Windows.Forms;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
 
-namespace RePin
+namespace ReBuffer
 {
     public partial class App : Application
     {
@@ -26,7 +26,7 @@ namespace RePin
             {
                 Icon = CreateIcon(),
                 Visible = true,
-                Text = "RePin - Recording Active"
+                Text = "ReBuffer - Recording Active"
             };
 
             // Context menu
@@ -54,7 +54,7 @@ namespace RePin
             _hotKeyManager = new GlobalHotKeyManager();
             _hotKeyManager.RegisterF8Callback(OnF8Pressed);
 
-            LogToTray("RePin started - Press F8 to save clip");
+            LogToTray("ReBuffer started - Press F8 to save clip");
         }
 
         private async void InitializeRecorder()
@@ -72,7 +72,7 @@ namespace RePin
                 );
 
                 await _recorder.StartAsync();
-                Console.WriteLine($"✓ RePin recording started");
+                Console.WriteLine($"✓ ReBuffer recording started");
             }
             catch (Exception ex)
             {
@@ -90,14 +90,14 @@ namespace RePin
             if (_isRecording)
             {
                 _recorder.StartAsync();
-                _notifyIcon!.Text = "RePin - Recording Active";
+                _notifyIcon!.Text = "ReBuffer - Recording Active";
                 _notifyIcon.Icon = CreateIcon();
                 LogToTray("Recording resumed");
             }
             else
             {
                 _recorder.Pause();
-                _notifyIcon!.Text = "RePin - Paused";
+                _notifyIcon!.Text = "ReBuffer - Paused";
                 _notifyIcon.Icon = CreatePausedIcon();
                 LogToTray("Recording paused");
             }

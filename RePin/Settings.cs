@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 
-namespace RePin
+namespace ReBuffer
 {
     public class Settings
     {
@@ -17,7 +17,7 @@ namespace RePin
         
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "RePin",
+            "ReBuffer",
             "settings.json"
         );
 

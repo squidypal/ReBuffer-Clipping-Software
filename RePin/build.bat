@@ -1,6 +1,6 @@
 @echo off
 echo ====================================
-echo Building RePin
+echo Building ReBuffer
 echo ====================================
 echo.
 
@@ -16,7 +16,7 @@ echo Build successful!
 echo ====================================
 echo.
 echo Executable location:
-echo bin\Release\net8.0-windows\RePin.exe
+echo bin\Release\net8.0-windows\ReBuffer.exe
 echo.
 goto end
 

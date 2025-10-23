@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Input;
 
-namespace RePin
+namespace ReBuffer
 {
     // Low-level keyboard hook for global hotkey
     public class GlobalHotKeyManager : IDisposable
