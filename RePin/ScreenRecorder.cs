@@ -1,7 +1,8 @@
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,8 +15,8 @@ using MapFlags = SharpDX.Direct3D11.MapFlags;
 namespace RePin
 {
     /// <summary>
-    /// High-performance screen recorder with real-time H.264 compression
-    /// Fixed to ensure proper MP4 file generation
+    /// screen recorder using FFmpeg circular buffer approach
+    /// This is my third or fourth retry or some shit
     /// </summary>
     public class ScreenRecorder : IDisposable
     {
@@ -34,11 +35,11 @@ namespace RePin
         private Texture2D? _stagingTexture;
         private int _width;
         private int _height;
-        private int _bytesPerFrame;
         
-        // Frame buffering - store raw frames for reliability
-        private readonly ConcurrentQueue<RawFrame> _frameBuffer;
-        private readonly int _maxBufferFrames;
+        // FFmpeg circular buffer recording
+        private Process? _ffmpegProcess;
+        private Stream? _ffmpegInput;
+        private string? _segmentBasePath;
         
         // Timing & threading
         private Task? _captureTask;
@@ -49,12 +50,11 @@ namespace RePin
         
         // Performance monitoring
         private long _totalFramesCaptured = 0;
-        private readonly object _statsLock = new();
 
         public int Width => _width;
         public int Height => _height;
-        public int BufferedFrames => _frameBuffer.Count;
-        public double BufferedSeconds => (double)BufferedFrames / _fps;
+        public int BufferedFrames => (int)Math.Min(_frameNumber, _bufferSeconds * _fps);
+        public double BufferedSeconds => BufferedFrames / (double)_fps;
 
         public ScreenRecorder(
             int bufferSeconds = 30, 
@@ -73,9 +73,6 @@ namespace RePin
             _useHardwareEncoding = useHardwareEncoding;
             _savePath = savePath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
             
-            _maxBufferFrames = bufferSeconds * fps;
-            _frameBuffer = new ConcurrentQueue<RawFrame>();
-            
             InitializeCapture();
         }
 
@@ -92,7 +89,6 @@ namespace RePin
             var outputDesc = output.Description;
             _width = outputDesc.DesktopBounds.Right - outputDesc.DesktopBounds.Left;
             _height = outputDesc.DesktopBounds.Bottom - outputDesc.DesktopBounds.Top;
-            _bytesPerFrame = _width * _height * 4;
 
             _duplicatedOutput = output1.DuplicateOutput(_device);
 
@@ -113,14 +109,7 @@ namespace RePin
             _stagingTexture = new Texture2D(_device, textureDesc);
 
             Console.WriteLine($"✓ Capture initialized: {_width}x{_height} @ {_fps} FPS");
-            Console.WriteLine($"✓ Target memory: ~{EstimateMemoryMB():F0} MB");
-        }
-
-        public double EstimateMemoryMB()
-        {
-            // Raw frame buffer estimation
-            double rawMB = (_bytesPerFrame * _maxBufferFrames) / (1024.0 * 1024.0);
-            return rawMB;
+            Console.WriteLine($"✓ Buffer: {_bufferSeconds} seconds");
         }
 
         public async Task StartAsync()
@@ -130,7 +119,10 @@ namespace RePin
             _isRecording = true;
             _cts = new CancellationTokenSource();
             
-            // Start capture loop with precise timing
+            // Start FFmpeg circular buffer recording
+            StartFFmpegRecording();
+            
+            // Start capture loop
             _frameTimer.Restart();
             _frameNumber = 0;
             _captureTask = Task.Factory.StartNew(
@@ -140,17 +132,72 @@ namespace RePin
             await Task.CompletedTask;
         }
 
+        private void StartFFmpegRecording()
+        {
+            try
+            {
+                // Create temp directory for segments
+                Directory.CreateDirectory(_savePath);
+                var tempDir = Path.Combine(_savePath, ".temp");
+                Directory.CreateDirectory(tempDir);
+                
+                _segmentBasePath = Path.Combine(tempDir, $"buffer_{Guid.NewGuid():N}");
+                
+                // Calculate segment duration to maintain buffer
+                // Use 10 second segments, keep enough to cover buffer time
+                int segmentDuration = 10;
+                int maxSegments = (int)Math.Ceiling(_bufferSeconds / (double)segmentDuration) + 1;
+                
+                // Build FFmpeg command with segment recording (circular buffer)
+                string codecArgs = _useHardwareEncoding
+                    ? $"-c:v h264_nvenc -preset p4 -b:v {_bitrate} -maxrate {_bitrate * 2} -bufsize {_bitrate * 2} -rc vbr"
+                    : $"-c:v libx264 -preset {_preset} -crf {_crf} -b:v {_bitrate} -maxrate {_bitrate * 2} -bufsize {_bitrate * 2}";
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    // Use segment muxer with wrap to create circular buffer
+                    Arguments = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
+                              $"-framerate {_fps} -i pipe:0 " +
+                              $"{codecArgs} " +
+                              $"-f segment -segment_time {segmentDuration} -segment_wrap {maxSegments} " +
+                              $"-reset_timestamps 1 -pix_fmt yuv420p " +
+                              $"\"{_segmentBasePath}_%03d.mkv\"",
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false,
+                    CreateNoWindow = true
+                };
+
+                _ffmpegProcess = Process.Start(psi);
+                if (_ffmpegProcess == null)
+                {
+                    throw new Exception("Failed to start FFmpeg process");
+                }
+                
+                _ffmpegInput = _ffmpegProcess.StandardInput.BaseStream;
+                Console.WriteLine($"✓ FFmpeg recording started (segments: {maxSegments} x {segmentDuration}s)");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Failed to start FFmpeg: {ex.Message}");
+                throw;
+            }
+        }
+
         private void CaptureLoop(CancellationToken cancellationToken)
         {
             byte[]? lastValidFrame = null;
+            int bytesPerFrame = _width * _height * 4;
             
             long targetTicks = Stopwatch.Frequency / _fps;
             long nextFrameTicks = _frameTimer.ElapsedTicks + targetTicks;
             
             int consecutiveDrops = 0;
-            const int MAX_CONSECUTIVE_DROPS = 5;
+            const int MAX_CONSECUTIVE_DROPS = 3;
 
-            Console.WriteLine($"🎬 Capture started: {_fps} FPS (tick interval: {targetTicks})");
+            Console.WriteLine($"🎬 Capture started: {_fps} FPS");
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -170,7 +217,7 @@ namespace RePin
                     }
                     
                     // Capture frame
-                    byte[]? frameData = TryCaptureFrame();
+                    byte[]? frameData = TryCaptureFrame(bytesPerFrame);
                     
                     if (frameData != null)
                     {
@@ -179,48 +226,55 @@ namespace RePin
                         _totalFramesCaptured++;
                         consecutiveDrops = 0;
                         
-                        AddFrameToBuffer(frameData);
-                    }
-                    else if (lastValidFrame != null)
-                    {
-                        // No new frame - repeat last frame
-                        consecutiveDrops++;
-                        
-                        if (consecutiveDrops < MAX_CONSECUTIVE_DROPS)
+                        // Send to FFmpeg
+                        if (_ffmpegInput != null && _ffmpegInput.CanWrite)
                         {
-                            byte[] duplicateFrame = new byte[lastValidFrame.Length];
-                            Array.Copy(lastValidFrame, duplicateFrame, lastValidFrame.Length);
-                            AddFrameToBuffer(duplicateFrame);
+                            try
+                            {
+                                _ffmpegInput.Write(frameData, 0, frameData.Length);
+                            }
+                            catch (IOException)
+                            {
+                                // FFmpeg pipe closed, stop recording
+                                Console.WriteLine("⚠ FFmpeg pipe closed");
+                                break;
+                            }
                         }
-                        else
+                    }
+                    else if (lastValidFrame != null && consecutiveDrops < MAX_CONSECUTIVE_DROPS)
+                    {
+                        // Repeat last frame for smooth playback
+                        consecutiveDrops++;
+                        if (_ffmpegInput != null && _ffmpegInput.CanWrite)
                         {
-                            consecutiveDrops = 0; // Reset to avoid spam
+                            try
+                            {
+                                _ffmpegInput.Write(lastValidFrame, 0, lastValidFrame.Length);
+                            }
+                            catch (IOException)
+                            {
+                                break;
+                            }
                         }
                     }
                     
                     _frameNumber++;
                     nextFrameTicks += targetTicks;
                     
-                    // Catch up if we've fallen behind
-                    if (nextFrameTicks < currentTicks)
+                    // Catch up if behind
+                    if (nextFrameTicks < currentTicks - (targetTicks * 5))
                     {
-                        long framesBehind = (currentTicks - nextFrameTicks) / targetTicks;
-                        if (framesBehind > 3)
-                        {
-                            Console.WriteLine($"⚠ Catching up: {framesBehind} frames behind");
-                            nextFrameTicks = currentTicks + targetTicks;
-                        }
+                        nextFrameTicks = currentTicks + targetTicks;
                     }
 
-                    // Stats every 5 seconds
-                    if (_frameNumber % (_fps * 5) == 0)
+                    // Stats every 10 seconds
+                    if (_frameNumber % (_fps * 10) == 0)
                     {
                         double elapsed = _frameTimer.Elapsed.TotalSeconds;
                         double actualFps = _frameNumber / elapsed;
                         double captureRate = (_totalFramesCaptured / (double)_frameNumber) * 100;
                         
-                        Console.WriteLine($"📊 {_frameNumber} frames | FPS: {actualFps:F1} | " +
-                                        $"Captured: {captureRate:F1}% | Buffer: {_frameBuffer.Count}");
+                        Console.WriteLine($"📊 Frames: {_frameNumber} | FPS: {actualFps:F1} | Capture: {captureRate:F1}%");
                     }
                 }
                 catch (Exception ex)
@@ -230,28 +284,10 @@ namespace RePin
                 }
             }
 
-            Console.WriteLine($"✓ Capture stopped: {_frameNumber} frames captured");
+            Console.WriteLine($"✓ Capture stopped: {_frameNumber} frames");
         }
 
-        private void AddFrameToBuffer(byte[] frameData)
-        {
-            var frame = new RawFrame
-            {
-                Data = frameData,
-                FrameNumber = _frameNumber,
-                Timestamp = DateTime.UtcNow
-            };
-
-            _frameBuffer.Enqueue(frame);
-
-            // Maintain circular buffer
-            while (_frameBuffer.Count > _maxBufferFrames)
-            {
-                _frameBuffer.TryDequeue(out _);
-            }
-        }
-
-        private byte[]? TryCaptureFrame()
+        private byte[]? TryCaptureFrame(int bytesPerFrame)
         {
             if (_duplicatedOutput == null || _device == null || _stagingTexture == null)
                 return null;
@@ -276,8 +312,8 @@ namespace RePin
 
                 try
                 {
-                    byte[] buffer = new byte[_bytesPerFrame];
-                    Marshal.Copy(dataBox.DataPointer, buffer, 0, _bytesPerFrame);
+                    byte[] buffer = new byte[bytesPerFrame];
+                    Marshal.Copy(dataBox.DataPointer, buffer, 0, bytesPerFrame);
                     return buffer;
                 }
                 finally
@@ -298,98 +334,149 @@ namespace RePin
 
         public void Pause()
         {
+            if (!_isRecording) return;
+            
             _isRecording = false;
             _cts?.Cancel();
+            
+            // Stop FFmpeg gracefully
+            try
+            {
+                _ffmpegInput?.Close();
+                _ffmpegProcess?.WaitForExit(3000);
+                if (_ffmpegProcess?.HasExited == false)
+                {
+                    _ffmpegProcess.Kill();
+                }
+            }
+            catch { }
         }
 
         public async Task<string> SaveClipAsync()
         {
-            if (_frameBuffer.IsEmpty)
+            if (_segmentBasePath == null)
             {
-                Console.WriteLine("! No frames in buffer");
+                Console.WriteLine("! No recording active");
                 return string.Empty;
             }
 
             var filename = $"clip_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
             var filepath = Path.Combine(_savePath, filename);
-            Directory.CreateDirectory(_savePath);
-
-            var frames = _frameBuffer.ToArray();
-            Console.WriteLine($"💾 Saving {frames.Length} frames...");
             
-            await Task.Run(() => SaveClipDirect(filepath, frames));
+            Console.WriteLine($"💾 Saving clip...");
+            
+            await Task.Run(() => SaveCurrentBuffer(filepath));
             
             return filename;
         }
 
-        private void SaveClipDirect(string outputPath, RawFrame[] frames)
+        private void SaveCurrentBuffer(string outputPath)
         {
             try
             {
                 var sw = Stopwatch.StartNew();
                 
-                // Build FFmpeg command for direct encoding
-                string codecArgs = _useHardwareEncoding
-                    ? $"-c:v h264_nvenc -preset p4 -b:v {_bitrate} -maxrate {_bitrate} -bufsize {_bitrate * 2}"
-                    : $"-c:v libx264 -preset {_preset} -crf {_crf} -b:v {_bitrate} -maxrate {_bitrate} -bufsize {_bitrate * 2}";
-
+                // Find all segment files
+                var dir = Path.GetDirectoryName(_segmentBasePath)!;
+                var baseFilename = Path.GetFileName(_segmentBasePath);
+                var pattern = $"{baseFilename}_*.mkv";
+                
+                var segmentFiles = Directory.GetFiles(dir, pattern)
+                    .OrderBy(f => File.GetCreationTime(f))
+                    .ToArray();
+                
+                if (segmentFiles.Length == 0)
+                {
+                    Console.WriteLine("❌ No segments found to save");
+                    return;
+                }
+                
+                Console.WriteLine($"  Found {segmentFiles.Length} segments");
+                
+                // Create concat file for FFmpeg
+                string concatFile = Path.Combine(dir, $".concat_{Guid.NewGuid():N}.txt");
+                var concatLines = segmentFiles.Select(f => $"file '{Path.GetFileName(f)}'");
+                File.WriteAllLines(concatFile, concatLines);
+                
+                // Use FFmpeg to concat segments and remux to MP4
                 var psi = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
-                    Arguments = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
-                              $"-framerate {_fps} -i pipe:0 {codecArgs} " +
-                              $"-movflags +faststart -pix_fmt yuv420p -y \"{outputPath}\"",
+                    Arguments = $"-f concat -safe 0 -i \"{concatFile}\" -c copy " +
+                              $"-movflags +faststart -y \"{outputPath}\"",
                     UseShellExecute = false,
-                    RedirectStandardInput = true,
                     RedirectStandardOutput = false,
                     RedirectStandardError = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    WorkingDirectory = dir
                 };
 
                 using var process = Process.Start(psi);
                 if (process == null)
                 {
-                    Console.WriteLine("❌ Failed to start FFmpeg");
+                    Console.WriteLine("❌ Failed to start FFmpeg for remux");
+                    File.Delete(concatFile);
                     return;
                 }
-
-                using (var stdin = process.StandardInput.BaseStream)
-                {
-                    foreach (var frame in frames)
-                    {
-                        stdin.Write(frame.Data, 0, frame.Data.Length);
-                    }
-                    stdin.Flush();
-                }
-
-                // Wait for FFmpeg to finish encoding
-                bool completed = process.WaitForExit(30000); // 30 second timeout
+                
+                bool completed = process.WaitForExit(20000);
                 
                 if (!completed)
                 {
-                    Console.WriteLine("⚠ FFmpeg encoding timeout, killing process");
+                    Console.WriteLine("⚠ FFmpeg timeout, killing process");
                     try { process.Kill(); } catch { }
-                    return;
                 }
-
+                
+                File.Delete(concatFile);
+                
                 sw.Stop();
 
                 if (process.ExitCode == 0 && File.Exists(outputPath))
                 {
                     var fileInfo = new FileInfo(outputPath);
                     Console.WriteLine($"✓ Clip saved in {sw.ElapsedMilliseconds}ms");
-                    Console.WriteLine($"  Duration: {frames.Length / (double)_fps:F1}s | " +
-                                    $"Size: {fileInfo.Length / (1024.0 * 1024.0):F2} MB");
+                    Console.WriteLine($"  Size: {fileInfo.Length / (1024.0 * 1024.0):F2} MB");
                 }
                 else
                 {
-                    Console.WriteLine($"❌ FFmpeg failed with exit code: {process.ExitCode}");
+                    Console.WriteLine($"❌ FFmpeg remux failed: {process.ExitCode}");
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Save error: {ex.Message}");
             }
+        }
+
+        private void CleanupTempFiles()
+        {
+            if (_segmentBasePath == null) return;
+            
+            try
+            {
+                var dir = Path.GetDirectoryName(_segmentBasePath)!;
+                
+                // Delete this recording's segments
+                var baseFilename = Path.GetFileName(_segmentBasePath);
+                var pattern = $"{baseFilename}_*.mkv";
+                var tempFiles = Directory.GetFiles(dir, pattern);
+                
+                foreach (var file in tempFiles)
+                {
+                    try { File.Delete(file); } catch { }
+                }
+                
+                // Try to delete temp directory if empty
+                try
+                {
+                    if (!Directory.EnumerateFiles(dir).Any())
+                    {
+                        Directory.Delete(dir);
+                    }
+                }
+                catch { }
+            }
+            catch { }
         }
 
         public void Dispose()
@@ -400,8 +487,21 @@ namespace RePin
             // Stop capture
             _captureTask?.Wait(2000);
             
-            // Clear buffer to free memory
-            while (_frameBuffer.TryDequeue(out _)) { }
+            // Stop FFmpeg
+            try
+            {
+                _ffmpegInput?.Close();
+                _ffmpegProcess?.WaitForExit(2000);
+                if (_ffmpegProcess?.HasExited == false)
+                {
+                    _ffmpegProcess.Kill();
+                }
+                _ffmpegProcess?.Dispose();
+            }
+            catch { }
+            
+            // Cleanup temp files
+            CleanupTempFiles();
             
             // Cleanup DirectX resources
             _duplicatedOutput?.Dispose();
@@ -411,12 +511,5 @@ namespace RePin
             
             Console.WriteLine("✓ ScreenRecorder disposed");
         }
-    }
-
-    public class RawFrame
-    {
-        public byte[] Data { get; set; } = Array.Empty<byte>();
-        public long FrameNumber { get; set; }
-        public DateTime Timestamp { get; set; }
     }
 }
