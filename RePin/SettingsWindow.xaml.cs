@@ -4,7 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using MessageBox = System.Windows.MessageBox;
 
-namespace RePin
+namespace ReBuffer
 {
     public partial class SettingsWindow : Window
     {

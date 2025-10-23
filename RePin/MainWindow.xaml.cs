@@ -5,7 +5,7 @@ using System.Windows;
 using System.Windows.Threading;
 using MessageBox = System.Windows.MessageBox;
 
-namespace RePin
+namespace ReBuffer
 {
     public partial class MainWindow : Window
     {

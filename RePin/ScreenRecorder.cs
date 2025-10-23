@@ -12,7 +12,7 @@ using SharpDX.DXGI;
 using Device = SharpDX.Direct3D11.Device;
 using MapFlags = SharpDX.Direct3D11.MapFlags;
 
-namespace RePin
+namespace ReBuffer
 {
     /// <summary>
     /// screen recorder using FFmpeg circular buffer approach
