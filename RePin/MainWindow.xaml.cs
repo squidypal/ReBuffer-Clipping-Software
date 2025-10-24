@@ -42,8 +42,9 @@ namespace ReBuffer
             LogMessage("Dashboard opened");
             LogMessage($"Buffer: {_settings.BufferSeconds}s @ {_settings.FrameRate} FPS");
             LogMessage($"Quality: {_settings.Quality}");
+            LogMessage($"Hotkey: {_settings.GetHotKeyName()}");
             LogMessage("");
-            LogMessage("Press F8 to save clips");
+            LogMessage($"Press {_settings.GetHotKeyName()} to save clips");
             LogMessage("Minimize to system tray to run in background");
 
             _updateTimer.Start();
@@ -61,6 +62,9 @@ namespace ReBuffer
                 StartStopButton.Content = "▶  Resume Recording";
                 StatusText.Text = "Recording Paused";
             }
+
+            // Update hotkey display
+            HotKeyText.Text = _settings.GetHotKeyName();
 
             if (_recorder != null)
             {

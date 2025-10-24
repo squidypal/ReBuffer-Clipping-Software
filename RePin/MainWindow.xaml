@@ -154,7 +154,8 @@
                             Padding="16,12"
                             VerticalAlignment="Center">
                         <StackPanel>
-                            <TextBlock Text="F8" 
+                            <TextBlock x:Name="HotKeyText"
+                                       Text="F8" 
                                        FontSize="22" 
                                        FontWeight="Bold"
                                        Foreground="#39c20f"

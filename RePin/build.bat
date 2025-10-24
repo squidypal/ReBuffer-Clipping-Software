@@ -18,6 +18,10 @@ echo.
 echo Executable location:
 echo bin\Release\net8.0-windows\ReBuffer.exe
 echo.
+echo IMPORTANT: Create these folders next to the EXE:
+echo   - images\icon.ico (app icon)
+echo   - clipSFX\clip.mp3 (save sound)
+echo.
 goto end
 
 :error

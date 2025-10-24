@@ -1,7 +1,10 @@
 using System;
 using System.Drawing;
+using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Forms;
+using NAudio.Wave;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
 
@@ -15,16 +18,30 @@ namespace ReBuffer
         private MainWindow? _mainWindow;
         private Settings _settings;
         private bool _isRecording = true;
+        private Mutex? _instanceMutex;
+        private const string MutexName = "ReBuffer_SingleInstance_Mutex_9F8A2E1D";
 
         private void Application_Startup(object sender, StartupEventArgs e)
         {
+            // Single instance check
+            bool createdNew;
+            _instanceMutex = new Mutex(true, MutexName, out createdNew);
+
+            if (!createdNew)
+            {
+                MessageBox.Show("ReBuffer is already running!", "Already Running", 
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                Shutdown();
+                return;
+            }
+
             // Load settings
             _settings = Settings.Load();
 
-            // Create system tray icon
+            // Create system tray icon with custom icon
             _notifyIcon = new NotifyIcon
             {
-                Icon = CreateIcon(),
+                Icon = LoadAppIcon(),
                 Visible = true,
                 Text = "ReBuffer - Recording Active"
             };
@@ -50,14 +67,44 @@ namespace ReBuffer
             // Initialize recorder
             InitializeRecorder();
 
-            // Setup F8 hotkey
+            // Setup hotkey
             _hotKeyManager = new GlobalHotKeyManager();
-            _hotKeyManager.RegisterF8Callback(OnF8Pressed);
+            _hotKeyManager.RegisterHotKey(_settings.HotKeyCode, OnHotKeyPressed);
 
             string audioStatus = _settings.RecordAudio 
                 ? $"(Audio: {GetAudioStatusText()})" 
                 : "(Audio: Off)";
-            LogToTray($"ReBuffer started {audioStatus} - Press F8 to save clip");
+            LogToTray($"ReBuffer started {audioStatus} - Press {_settings.GetHotKeyName()} to save clip");
+        }
+
+        private Icon LoadAppIcon()
+        {
+            try
+            {
+                var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "images", "icon.ico");
+                if (File.Exists(iconPath))
+                {
+                    return new Icon(iconPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load custom icon: {ex.Message}");
+            }
+
+            // Fallback to simple red dot icon
+            return CreateDefaultIcon();
+        }
+
+        private Icon CreateDefaultIcon()
+        {
+            var bitmap = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.Clear(Color.Transparent);
+                g.FillEllipse(Brushes.Red, 2, 2, 12, 12);
+            }
+            return Icon.FromHandle(bitmap.GetHicon());
         }
 
         private string GetAudioStatusText()
@@ -112,7 +159,7 @@ namespace ReBuffer
             {
                 _recorder.StartAsync();
                 _notifyIcon!.Text = "ReBuffer - Recording Active";
-                _notifyIcon.Icon = CreateIcon();
+                _notifyIcon.Icon = LoadAppIcon();
                 LogToTray("Recording resumed");
             }
             else
@@ -124,7 +171,7 @@ namespace ReBuffer
             }
         }
 
-        private async void OnF8Pressed()
+        private async void OnHotKeyPressed()
         {
             if (_recorder == null || !_isRecording) return;
 
@@ -134,6 +181,9 @@ namespace ReBuffer
                 
                 if (!string.IsNullOrEmpty(filename))
                 {
+                    // Play clip sound
+                    PlayClipSound();
+                    
                     // Show notification balloon
                     _notifyIcon?.ShowBalloonTip(
                         2000,
@@ -153,6 +203,40 @@ namespace ReBuffer
                     ex.Message,
                     ToolTipIcon.Error
                 );
+            }
+        }
+
+        private void PlayClipSound()
+        {
+            try
+            {
+                var soundPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clipSFX", "clip.mp3");
+                if (File.Exists(soundPath))
+                {
+                    // Play sound in background thread
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try
+                        {
+                            using var audioFile = new AudioFileReader(soundPath);
+                            using var outputDevice = new WaveOutEvent();
+                            outputDevice.Init(audioFile);
+                            outputDevice.Play();
+                            while (outputDevice.PlaybackState == PlaybackState.Playing)
+                            {
+                                Thread.Sleep(100);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Failed to play clip sound: {ex.Message}");
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load clip sound: {ex.Message}");
             }
         }
 
@@ -213,6 +297,12 @@ namespace ReBuffer
                 _recorder.Dispose();
             }
 
+            // Re-register hotkey with new key code
+            if (_hotKeyManager != null)
+            {
+                _hotKeyManager.RegisterHotKey(_settings.HotKeyCode, OnHotKeyPressed);
+            }
+
             InitializeRecorder();
 
             if (wasRecording && _recorder != null)
@@ -238,24 +328,14 @@ namespace ReBuffer
             _recorder?.Dispose();
             _hotKeyManager?.Dispose();
             _notifyIcon?.Dispose();
+            _instanceMutex?.ReleaseMutex();
+            _instanceMutex?.Dispose();
             Shutdown();
         }
 
         private void LogToTray(string message)
         {
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
-        }
-
-        private Icon CreateIcon()
-        {
-            // Create a simple red dot icon
-            var bitmap = new Bitmap(16, 16);
-            using (var g = Graphics.FromImage(bitmap))
-            {
-                g.Clear(Color.Transparent);
-                g.FillEllipse(Brushes.Red, 2, 2, 12, 12);
-            }
-            return Icon.FromHandle(bitmap.GetHicon());
         }
 
         private Icon CreatePausedIcon()

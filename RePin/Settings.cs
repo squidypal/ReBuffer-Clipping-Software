@@ -15,6 +15,9 @@ namespace ReBuffer
         public string EncodingPreset { get; set; } = "ultrafast";
         public string SavePath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
         
+        // Hotkey settings
+        public int HotKeyCode { get; set; } = 0x77; // F8 by default
+        
         // Audio settings
         public bool RecordAudio { get; set; } = true;
         public bool RecordDesktopAudio { get; set; } = true;
@@ -68,6 +71,26 @@ namespace ReBuffer
             {
                 Console.WriteLine($"Failed to save settings: {ex.Message}");
             }
+        }
+
+        public string GetHotKeyName()
+        {
+            return HotKeyCode switch
+            {
+                0x70 => "F1",
+                0x71 => "F2",
+                0x72 => "F3",
+                0x73 => "F4",
+                0x74 => "F5",
+                0x75 => "F6",
+                0x76 => "F7",
+                0x77 => "F8",
+                0x78 => "F9",
+                0x79 => "F10",
+                0x7A => "F11",
+                0x7B => "F12",
+                _ => $"Key{HotKeyCode:X}"
+            };
         }
 
         public int GetBitrateForQuality()

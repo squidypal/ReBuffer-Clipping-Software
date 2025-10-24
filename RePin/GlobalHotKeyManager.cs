@@ -13,18 +13,20 @@ namespace ReBuffer
         private const int WM_KEYDOWN = 0x0100;
         private static LowLevelKeyboardProc _proc = HookCallback;
         private static IntPtr _hookID = IntPtr.Zero;
-        private static Action? _f8Callback;
+        private static Action? _hotkeyCallback;
+        private static int _targetKeyCode = 0x77; // F8 by default
 
-        public event EventHandler? F8Pressed;
+        public event EventHandler? HotKeyPressed;
 
         public GlobalHotKeyManager()
         {
             _hookID = SetHook(_proc);
         }
 
-        public void RegisterF8Callback(Action callback)
+        public void RegisterHotKey(int keyCode, Action callback)
         {
-            _f8Callback = callback;
+            _targetKeyCode = keyCode;
+            _hotkeyCallback = callback;
         }
 
         private static IntPtr SetHook(LowLevelKeyboardProc proc)
@@ -48,9 +50,9 @@ namespace ReBuffer
             if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
                 int vkCode = Marshal.ReadInt32(lParam);
-                if (vkCode == (int)Keys.F8)
+                if (vkCode == _targetKeyCode)
                 {
-                    _f8Callback?.Invoke();
+                    _hotkeyCallback?.Invoke();
                 }
             }
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
@@ -79,6 +81,17 @@ namespace ReBuffer
 
     public enum Keys
     {
-        F8 = 0x77
+        F1 = 0x70,
+        F2 = 0x71,
+        F3 = 0x72,
+        F4 = 0x73,
+        F5 = 0x74,
+        F6 = 0x75,
+        F7 = 0x76,
+        F8 = 0x77,
+        F9 = 0x78,
+        F10 = 0x79,
+        F11 = 0x7A,
+        F12 = 0x7B
     }
 }

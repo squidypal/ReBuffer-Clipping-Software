@@ -28,6 +28,16 @@ namespace ReBuffer
                 // Save path
                 SavePathText.Text = _settings.SavePath;
 
+                // Hotkey
+                foreach (ComboBoxItem item in HotKeyCombo.Items)
+                {
+                    if (item.Tag != null && int.Parse(item.Tag.ToString()!) == _settings.HotKeyCode)
+                    {
+                        HotKeyCombo.SelectedItem = item;
+                        break;
+                    }
+                }
+
                 // Buffer duration
                 BufferSlider.Value = _settings.BufferSeconds;
                 BufferValueText.Text = $"{_settings.BufferSeconds}s";
@@ -275,6 +285,16 @@ namespace ReBuffer
                         MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
+
+                // Save hotkey
+                var hotKeyItem = HotKeyCombo.SelectedItem as ComboBoxItem;
+                if (hotKeyItem?.Tag == null)
+                {
+                    MessageBox.Show("Please select a hotkey.", "Validation Error",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                _settings.HotKeyCode = int.Parse(hotKeyItem.Tag.ToString()!);
 
                 // Save buffer settings
                 _settings.BufferSeconds = (int)BufferSlider.Value;

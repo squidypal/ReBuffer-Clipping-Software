@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Settings" 
-        Height="780" 
+        Height="820" 
         Width="600"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
@@ -172,6 +172,29 @@
                                     Padding="12,0"
                                     Click="BrowseSavePath_Click"/>
                         </Grid>
+
+                        <!-- Clip Hotkey -->
+                        <TextBlock Text="Clip Hotkey" 
+                                   Foreground="#B0B0B0" 
+                                   FontSize="12"
+                                   Margin="0,0,0,8"/>
+                        <ComboBox x:Name="HotKeyCombo" 
+                                  Style="{StaticResource ModernComboBox}"
+                                  Foreground="Black"
+                                  Margin="0,0,0,16">
+                            <ComboBoxItem Content="F1" Tag="112"/>
+                            <ComboBoxItem Content="F2" Tag="113"/>
+                            <ComboBoxItem Content="F3" Tag="114"/>
+                            <ComboBoxItem Content="F4" Tag="115"/>
+                            <ComboBoxItem Content="F5" Tag="116"/>
+                            <ComboBoxItem Content="F6" Tag="117"/>
+                            <ComboBoxItem Content="F7" Tag="118"/>
+                            <ComboBoxItem Content="F8" Tag="119" IsSelected="True"/>
+                            <ComboBoxItem Content="F9" Tag="120"/>
+                            <ComboBoxItem Content="F10" Tag="121"/>
+                            <ComboBoxItem Content="F11" Tag="122"/>
+                            <ComboBoxItem Content="F12" Tag="123"/>
+                        </ComboBox>
 
                         <!-- Buffer Duration -->
                         <TextBlock Text="Buffer Duration" 
