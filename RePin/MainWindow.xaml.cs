@@ -53,15 +53,13 @@ namespace ReBuffer
         {
             if (_isRecording)
             {
-                StartStopButton.Content = "⏸ Pause Recording";
-                StatusText.Text = "⏺ Recording Active";
-                StatusText.Foreground = System.Windows.Media.Brushes.LimeGreen;
+                StartStopButton.Content = "⏸  Pause Recording";
+                StatusText.Text = "Recording Active";
             }
             else
             {
-                StartStopButton.Content = "▶ Resume Recording";
-                StatusText.Text = "⏸ Recording Paused";
-                StatusText.Foreground = System.Windows.Media.Brushes.Orange;
+                StartStopButton.Content = "▶  Resume Recording";
+                StatusText.Text = "Recording Paused";
             }
 
             if (_recorder != null)
@@ -98,7 +96,7 @@ namespace ReBuffer
             UpdateUI();
             RecordingToggled?.Invoke(_isRecording);
             
-            LogMessage(_isRecording ? "Recording resumed" : "Recording paused");
+            LogMessage(_isRecording ? "✓ Recording resumed" : "⏸ Recording paused");
         }
 
         private void Settings_Click(object sender, RoutedEventArgs e)
@@ -110,7 +108,7 @@ namespace ReBuffer
 
                 if (result == true && settingsWindow.SettingsChanged)
                 {
-                    LogMessage("Settings changed - restarting recorder...");
+                    LogMessage("⚙ Settings changed - restarting recorder...");
                     SettingsChanged?.Invoke();
                     UpdateUI();
                     LogMessage("✓ Settings applied successfully");
@@ -130,7 +128,7 @@ namespace ReBuffer
             Directory.CreateDirectory(clipsFolder);
             
             Process.Start("explorer.exe", clipsFolder);
-            LogMessage($"Opened: {clipsFolder}");
+            LogMessage($"📁 Opened: {clipsFolder}");
         }
 
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
