@@ -27,6 +27,9 @@ namespace ReBuffer
         public float DesktopVolume { get; set; } = 1.0f; // 0.0 to 2.0
         public float MicrophoneVolume { get; set; } = 1.0f; // 0.0 to 2.0
         
+        // Startup settings
+        public bool RunAtStartup { get; set; } = false;
+        
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "ReBuffer",

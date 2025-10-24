@@ -135,6 +135,25 @@ namespace ReBuffer
             LogMessage($"📁 Opened: {clipsFolder}");
         }
 
+        private void GitHub_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "https://github.com/squidypal/ReBuffer-Clipping-Software",
+                    UseShellExecute = true
+                });
+                LogMessage("🌐 Opened GitHub repository");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"✗ Failed to open GitHub: {ex.Message}");
+                MessageBox.Show($"Failed to open GitHub: {ex.Message}", 
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             _updateTimer?.Stop();

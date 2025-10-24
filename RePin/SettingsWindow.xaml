@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Settings" 
-        Height="820" 
+        Height="850" 
         Width="600"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
@@ -453,6 +453,37 @@
                                   IsChecked="True"
                                   Margin="0,8,0,6"/>
                         <TextBlock Text="Requires NVIDIA or Intel GPU with encoder support"
+                                   FontSize="11"
+                                   Foreground="#606060"
+                                   Margin="24,0,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- System Settings Section -->
+                <Border Background="#161616" 
+                        CornerRadius="12" 
+                        Padding="20"
+                        Margin="0,0,0,15">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#000000" 
+                                        BlurRadius="15" 
+                                        ShadowDepth="3" 
+                                        Opacity="0.4"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <TextBlock Text="System" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold" 
+                                   Foreground="#FFFFFF"
+                                   Margin="0,0,0,16"/>
+
+                        <!-- Run at Startup -->
+                        <CheckBox x:Name="RunAtStartupCheck" 
+                                  Content="Run ReBuffer when Windows starts" 
+                                  Style="{StaticResource ModernCheckBox}"
+                                  IsChecked="False"
+                                  Margin="0,0,0,6"/>
+                        <TextBlock Text="ReBuffer will start minimized in the system tray"
                                    FontSize="11"
                                    Foreground="#606060"
                                    Margin="24,0,0,0"/>

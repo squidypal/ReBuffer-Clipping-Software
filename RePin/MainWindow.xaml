@@ -79,6 +79,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -96,6 +97,17 @@
                                Foreground="#707070"
                                FontWeight="Normal"/>
                 </StackPanel>
+
+                <!-- GitHub Link -->
+                <Button Grid.Column="2"
+                        Content="⭐ GitHub"
+                        Height="36"
+                        Padding="16,0"
+                        FontSize="13"
+                        Style="{StaticResource SecondaryButton}"
+                        Click="GitHub_Click"
+                        ToolTip="View on GitHub"
+                        VerticalAlignment="Center"/>
             </Grid>
 
             <!-- Status Card -->

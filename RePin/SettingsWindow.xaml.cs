@@ -80,6 +80,9 @@ namespace ReBuffer
                 // Load audio devices
                 LoadAudioDevices();
 
+                // Startup setting
+                RunAtStartupCheck.IsChecked = _settings.RunAtStartup;
+
                 UpdateMemoryEstimate();
                 UpdateAudioPanelVisibility();
             }
@@ -384,6 +387,18 @@ namespace ReBuffer
                     MessageBox.Show("Please enable at least one audio source or disable audio recording.", 
                         "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
+                }
+
+                // Save startup setting
+                bool runAtStartup = RunAtStartupCheck.IsChecked ?? false;
+                if (runAtStartup != _settings.RunAtStartup)
+                {
+                    if (!StartupManager.SetStartup(runAtStartup))
+                    {
+                        MessageBox.Show("Failed to update Windows startup settings. You may need to run ReBuffer as administrator.", 
+                            "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    _settings.RunAtStartup = runAtStartup;
                 }
 
                 // Save to file
