@@ -8,10 +8,6 @@ using NAudio.Wave;
 
 namespace ReBuffer
 {
-    /// <summary>
-    /// Simple audio recorder - captures to WAV file, mixed later
-    /// Much more reliable than real-time FFmpeg piping
-    /// </summary>
     public class AudioRecorder : IDisposable
     {
         private WasapiLoopbackCapture? _desktopCapture;
@@ -55,13 +51,13 @@ namespace ReBuffer
             
             try
             {
-                // Start desktop audio
+                CleanupOldAudioFiles();
+                
                 if (_recordDesktop)
                 {
                     StartDesktopCapture();
                 }
                 
-                // Start microphone
                 if (_recordMic)
                 {
                     StartMicrophoneCapture();
@@ -72,10 +68,35 @@ namespace ReBuffer
             catch (Exception ex)
             {
                 Console.WriteLine($"⚠ Audio recording failed: {ex.Message}");
-                // Don't throw - let video continue without audio
             }
             
             await Task.CompletedTask;
+        }
+
+        private void CleanupOldAudioFiles()
+        {
+            try
+            {
+                if (!Directory.Exists(_tempFolder)) return;
+                
+                var oldDesktopFiles = Directory.GetFiles(_tempFolder, "desktop_*.wav");
+                foreach (var file in oldDesktopFiles)
+                {
+                    try { File.Delete(file); } catch { }
+                }
+                
+                var oldMicFiles = Directory.GetFiles(_tempFolder, "mic_*.wav");
+                foreach (var file in oldMicFiles)
+                {
+                    try { File.Delete(file); } catch { }
+                }
+                
+                if (oldDesktopFiles.Length + oldMicFiles.Length > 0)
+                {
+                    Console.WriteLine($"✓ Cleaned up {oldDesktopFiles.Length + oldMicFiles.Length} old audio files");
+                }
+            }
+            catch { }
         }
 
         private void StartDesktopCapture()
@@ -85,7 +106,6 @@ namespace ReBuffer
                 _desktopCapture = new WasapiLoopbackCapture();
                 _desktopFilePath = Path.Combine(_tempFolder, $"desktop_{Guid.NewGuid():N}.wav");
                 
-                // Create WAV writer with the capture format
                 _desktopWriter = new WaveFileWriter(_desktopFilePath, _desktopCapture.WaveFormat);
                 
                 _desktopCapture.DataAvailable += (s, e) =>
@@ -94,7 +114,6 @@ namespace ReBuffer
                     
                     try
                     {
-                        // Apply volume if needed
                         if (Math.Abs(_desktopVolume - 1.0f) > 0.01f)
                         {
                             byte[] buffer = new byte[e.BytesRecorded];
@@ -127,7 +146,7 @@ namespace ReBuffer
             {
                 _micCapture = new WaveInEvent
                 {
-                    WaveFormat = new WaveFormat(48000, 16, 1), // 48kHz mono
+                    WaveFormat = new WaveFormat(48000, 16, 1),
                     BufferMilliseconds = 50
                 };
                 
@@ -140,7 +159,6 @@ namespace ReBuffer
                     
                     try
                     {
-                        // Apply volume if needed
                         if (Math.Abs(_micVolume - 1.0f) > 0.01f)
                         {
                             byte[] buffer = new byte[e.BytesRecorded];
@@ -171,7 +189,6 @@ namespace ReBuffer
         {
             if (format.BitsPerSample == 16)
             {
-                // 16-bit samples
                 for (int i = 0; i < buffer.Length - 1; i += 2)
                 {
                     short sample = (short)(buffer[i] | (buffer[i + 1] << 8));
@@ -182,7 +199,6 @@ namespace ReBuffer
             }
             else if (format.Encoding == WaveFormatEncoding.IeeeFloat)
             {
-                // 32-bit float samples
                 for (int i = 0; i < buffer.Length - 3; i += 4)
                 {
                     float sample = BitConverter.ToSingle(buffer, i);
@@ -204,7 +220,7 @@ namespace ReBuffer
                 _desktopCapture?.StopRecording();
                 _micCapture?.StopRecording();
                 
-                Thread.Sleep(100); // Let final data flush
+                Thread.Sleep(100);
                 
                 _desktopWriter?.Flush();
                 _desktopWriter?.Dispose();
@@ -230,7 +246,6 @@ namespace ReBuffer
             Console.WriteLine("✓ AudioRecorder disposed");
         }
 
-        // Static utility methods
         public static string[] GetDesktopAudioDevices()
         {
             try
