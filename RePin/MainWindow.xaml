@@ -87,7 +87,11 @@
                                FontWeight="SemiBold" 
                                Foreground="#FFFFFF"
                                Margin="0,0,0,2"/>
-                    <TextBlock Text="Screen clipping made simple" 
+                    <TextBlock Text="Simple clipping" 
+                               FontSize="13" 
+                               Foreground="#707070"
+                               FontWeight="Normal"/>
+                    <TextBlock Text="Version 1.0.0" 
                                FontSize="13" 
                                Foreground="#707070"
                                FontWeight="Normal"/>
