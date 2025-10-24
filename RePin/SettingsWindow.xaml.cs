@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using MessageBox = System.Windows.MessageBox;
@@ -58,13 +59,116 @@ namespace ReBuffer
                 // Hardware encoding
                 HardwareEncodingCheck.IsChecked = _settings.UseHardwareEncoding;
 
+                // Audio settings
+                RecordAudioCheck.IsChecked = _settings.RecordAudio;
+                RecordDesktopCheck.IsChecked = _settings.RecordDesktopAudio;
+                RecordMicCheck.IsChecked = _settings.RecordMicrophone;
+                
+                DesktopVolumeSlider.Value = _settings.DesktopVolume * 100;
+                MicVolumeSlider.Value = _settings.MicrophoneVolume * 100;
+
+                // Load audio devices
+                LoadAudioDevices();
+
                 UpdateMemoryEstimate();
+                UpdateAudioPanelVisibility();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error loading settings: {ex.Message}", "Error", 
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private void LoadAudioDevices()
+        {
+            try
+            {
+                // Desktop audio devices
+                var desktopDevices = AudioRecorder.GetDesktopAudioDevices();
+                DesktopDeviceCombo.Items.Clear();
+                
+                foreach (var device in desktopDevices)
+                {
+                    var parts = device.Split('|');
+                    var item = new ComboBoxItem 
+                    { 
+                        Content = parts[0],
+                        Tag = parts.Length > 1 ? parts[1] : ""
+                    };
+                    DesktopDeviceCombo.Items.Add(item);
+                    
+                    // Select saved device
+                    if (_settings.DesktopAudioDevice == null && parts[0].Contains("Default"))
+                    {
+                        DesktopDeviceCombo.SelectedItem = item;
+                    }
+                    else if (_settings.DesktopAudioDevice != null && 
+                             parts.Length > 1 && 
+                             parts[1] == _settings.DesktopAudioDevice)
+                    {
+                        DesktopDeviceCombo.SelectedItem = item;
+                    }
+                }
+
+                if (DesktopDeviceCombo.SelectedItem == null && DesktopDeviceCombo.Items.Count > 0)
+                {
+                    DesktopDeviceCombo.SelectedIndex = 0;
+                }
+
+                // Microphone devices
+                var micDevices = AudioRecorder.GetMicrophoneDevices();
+                MicDeviceCombo.Items.Clear();
+                
+                foreach (var device in micDevices)
+                {
+                    var parts = device.Split('|');
+                    var item = new ComboBoxItem 
+                    { 
+                        Content = parts[0],
+                        Tag = parts.Length > 1 ? parts[1] : ""
+                    };
+                    MicDeviceCombo.Items.Add(item);
+                    
+                    // Select saved device
+                    if (_settings.MicrophoneDevice == null && parts[0].Contains("Default"))
+                    {
+                        MicDeviceCombo.SelectedItem = item;
+                    }
+                    else if (_settings.MicrophoneDevice != null && 
+                             parts.Length > 1 && 
+                             parts[1] == _settings.MicrophoneDevice)
+                    {
+                        MicDeviceCombo.SelectedItem = item;
+                    }
+                }
+
+                if (MicDeviceCombo.SelectedItem == null && MicDeviceCombo.Items.Count > 0)
+                {
+                    MicDeviceCombo.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load audio devices: {ex.Message}");
+            }
+        }
+
+        private void UpdateAudioPanelVisibility()
+        {
+            AudioOptionsPanel.IsEnabled = RecordAudioCheck.IsChecked ?? false;
+            DesktopAudioPanel.IsEnabled = RecordDesktopCheck.IsChecked ?? false;
+            MicrophonePanel.IsEnabled = RecordMicCheck.IsChecked ?? false;
+        }
+
+        private void RecordAudioCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateAudioPanelVisibility();
+        }
+
+        private void AudioSourceCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateAudioPanelVisibility();
         }
 
         private void BufferSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -95,6 +199,22 @@ namespace ReBuffer
             }
         }
 
+        private void DesktopVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (DesktopVolumeText != null)
+            {
+                DesktopVolumeText.Text = $"{(int)e.NewValue}%";
+            }
+        }
+
+        private void MicVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (MicVolumeText != null)
+            {
+                MicVolumeText.Text = $"{(int)e.NewValue}%";
+            }
+        }
+
         private void UpdateMemoryEstimate()
         {
             if (MemoryEstimateText == null || BufferSlider == null || FrameRateCombo == null)
@@ -112,13 +232,17 @@ namespace ReBuffer
 
                 int fps = int.Parse(selectedItem.Tag.ToString()!);
                 
-                // Note: With adaptive pool, actual memory will be much lower
-                // This shows theoretical maximum if all frames were unique
-                int maxFrames = 100; // Adaptive pool limit
+                // Video memory estimate
+                int maxFrames = 100;
                 long bytesPerFrame = 1920 * 1080 * 4;
-                double memoryMB = (bytesPerFrame * maxFrames) / (1024.0 * 1024.0);
+                double videoMemoryMB = (bytesPerFrame * maxFrames) / (1024.0 * 1024.0);
 
-                MemoryEstimateText.Text = $"Max memory: ~{memoryMB:F0} MB (adaptive pool)";
+                // Audio memory estimate (48kHz, 16-bit, stereo)
+                double audioMemoryMB = (bufferSeconds * 48000 * 2 * 2) / (1024.0 * 1024.0);
+
+                double totalMemoryMB = videoMemoryMB + audioMemoryMB;
+
+                MemoryEstimateText.Text = $"Est. memory: ~{totalMemoryMB:F0} MB (video: {videoMemoryMB:F0} MB + audio: {audioMemoryMB:F0} MB)";
                 MemoryEstimateText.Foreground = new System.Windows.Media.SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(0x88, 0x88, 0x88));
             }
@@ -206,6 +330,37 @@ namespace ReBuffer
                 // Save hardware encoding preference
                 _settings.UseHardwareEncoding = HardwareEncodingCheck.IsChecked ?? true;
 
+                // Save audio settings
+                _settings.RecordAudio = RecordAudioCheck.IsChecked ?? true;
+                _settings.RecordDesktopAudio = RecordDesktopCheck.IsChecked ?? true;
+                _settings.RecordMicrophone = RecordMicCheck.IsChecked ?? true;
+                
+                _settings.DesktopVolume = (float)(DesktopVolumeSlider.Value / 100.0);
+                _settings.MicrophoneVolume = (float)(MicVolumeSlider.Value / 100.0);
+
+                // Save selected audio devices
+                var desktopItem = DesktopDeviceCombo.SelectedItem as ComboBoxItem;
+                if (desktopItem != null)
+                {
+                    var deviceId = desktopItem.Tag?.ToString();
+                    _settings.DesktopAudioDevice = string.IsNullOrEmpty(deviceId) ? null : deviceId;
+                }
+
+                var micItem = MicDeviceCombo.SelectedItem as ComboBoxItem;
+                if (micItem != null)
+                {
+                    var deviceId = micItem.Tag?.ToString();
+                    _settings.MicrophoneDevice = string.IsNullOrEmpty(deviceId) ? null : deviceId;
+                }
+
+                // Validate audio settings
+                if (_settings.RecordAudio && !_settings.RecordDesktopAudio && !_settings.RecordMicrophone)
+                {
+                    MessageBox.Show("Please enable at least one audio source or disable audio recording.", 
+                        "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
                 // Save to file
                 _settings.Save();
 
@@ -238,7 +393,6 @@ namespace ReBuffer
                 CheckPathExists = true
             };
 
-            // Workaround to select folder using SaveFileDialog
             if (dialog.ShowDialog() == true)
             {
                 var folderPath = System.IO.Path.GetDirectoryName(dialog.FileName);

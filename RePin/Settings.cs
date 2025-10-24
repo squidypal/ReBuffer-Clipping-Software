@@ -15,6 +15,15 @@ namespace ReBuffer
         public string EncodingPreset { get; set; } = "ultrafast";
         public string SavePath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
         
+        // Audio settings
+        public bool RecordAudio { get; set; } = true;
+        public bool RecordDesktopAudio { get; set; } = true;
+        public bool RecordMicrophone { get; set; } = true;
+        public string? DesktopAudioDevice { get; set; } = null; // null = default
+        public string? MicrophoneDevice { get; set; } = null; // null = default
+        public float DesktopVolume { get; set; } = 1.0f; // 0.0 to 2.0
+        public float MicrophoneVolume { get; set; } = 1.0f; // 0.0 to 2.0
+        
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "ReBuffer",

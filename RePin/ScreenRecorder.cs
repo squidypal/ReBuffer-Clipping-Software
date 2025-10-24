@@ -15,8 +15,9 @@ using MapFlags = SharpDX.Direct3D11.MapFlags;
 namespace ReBuffer
 {
     /// <summary>
-    /// screen recorder using FFmpeg circular buffer approach
-    /// This is my third or fourth retry or some shit
+    /// Screen recorder with audio support
+    /// Video: Real-time FFmpeg segments (circular buffer)
+    /// Audio: WAV files, mixed during save
     /// </summary>
     public class ScreenRecorder : IDisposable
     {
@@ -36,7 +37,11 @@ namespace ReBuffer
         private int _width;
         private int _height;
         
-        // FFmpeg circular buffer recording
+        // Audio
+        private AudioRecorder? _audioRecorder;
+        private readonly bool _recordAudio;
+        
+        // FFmpeg video recording
         private Process? _ffmpegProcess;
         private Stream? _ffmpegInput;
         private string? _segmentBasePath;
@@ -63,7 +68,14 @@ namespace ReBuffer
             int crf = 23,
             string preset = "ultrafast",
             bool useHardwareEncoding = true,
-            string? savePath = null)
+            string? savePath = null,
+            bool recordAudio = true,
+            string? desktopAudioDevice = null,
+            string? microphoneDevice = null,
+            float desktopVolume = 1.0f,
+            float micVolume = 1.0f,
+            bool recordDesktop = true,
+            bool recordMic = true)
         {
             _bufferSeconds = bufferSeconds;
             _fps = fps;
@@ -72,8 +84,30 @@ namespace ReBuffer
             _preset = preset;
             _useHardwareEncoding = useHardwareEncoding;
             _savePath = savePath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
+            _recordAudio = recordAudio;
             
             InitializeCapture();
+            
+            // Initialize audio if enabled
+            if (_recordAudio)
+            {
+                try
+                {
+                    var tempAudioPath = Path.Combine(_savePath, ".temp_audio");
+                    _audioRecorder = new AudioRecorder(
+                        tempAudioPath,
+                        recordDesktop,
+                        recordMic,
+                        desktopVolume,
+                        micVolume
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠ Audio init failed: {ex.Message}");
+                    _audioRecorder = null;
+                }
+            }
         }
 
         private void InitializeCapture()
@@ -119,7 +153,13 @@ namespace ReBuffer
             _isRecording = true;
             _cts = new CancellationTokenSource();
             
-            // Start FFmpeg circular buffer recording
+            // Start audio recording
+            if (_audioRecorder != null)
+            {
+                await _audioRecorder.StartAsync();
+            }
+            
+            // Start FFmpeg video recording
             StartFFmpegRecording();
             
             // Start capture loop
@@ -136,19 +176,16 @@ namespace ReBuffer
         {
             try
             {
-                // Create temp directory for segments
                 Directory.CreateDirectory(_savePath);
                 var tempDir = Path.Combine(_savePath, ".temp");
                 Directory.CreateDirectory(tempDir);
                 
                 _segmentBasePath = Path.Combine(tempDir, $"buffer_{Guid.NewGuid():N}");
                 
-                // Calculate segment duration to maintain buffer
-                // Use 10 second segments, keep enough to cover buffer time
+                // Video only - audio mixed later
                 int segmentDuration = 10;
                 int maxSegments = (int)Math.Ceiling(_bufferSeconds / (double)segmentDuration) + 1;
                 
-                // Build FFmpeg command with segment recording (circular buffer)
                 string codecArgs = _useHardwareEncoding
                     ? $"-c:v h264_nvenc -preset p4 -b:v {_bitrate} -maxrate {_bitrate * 2} -bufsize {_bitrate * 2} -rc vbr"
                     : $"-c:v libx264 -preset {_preset} -crf {_crf} -b:v {_bitrate} -maxrate {_bitrate * 2} -bufsize {_bitrate * 2}";
@@ -156,7 +193,6 @@ namespace ReBuffer
                 var psi = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
-                    // Use segment muxer with wrap to create circular buffer
                     Arguments = $"-f rawvideo -pixel_format bgra -video_size {_width}x{_height} " +
                               $"-framerate {_fps} -i pipe:0 " +
                               $"{codecArgs} " +
@@ -177,7 +213,7 @@ namespace ReBuffer
                 }
                 
                 _ffmpegInput = _ffmpegProcess.StandardInput.BaseStream;
-                Console.WriteLine($"✓ FFmpeg recording started (segments: {maxSegments} x {segmentDuration}s)");
+                Console.WriteLine($"✓ FFmpeg recording started (video only, segments: {maxSegments} x {segmentDuration}s)");
             }
             catch (Exception ex)
             {
@@ -205,7 +241,6 @@ namespace ReBuffer
                 {
                     long currentTicks = _frameTimer.ElapsedTicks;
                     
-                    // Precise frame pacing
                     if (currentTicks < nextFrameTicks)
                     {
                         long ticksToWait = nextFrameTicks - currentTicks;
@@ -216,17 +251,14 @@ namespace ReBuffer
                         SpinWait.SpinUntil(() => _frameTimer.ElapsedTicks >= nextFrameTicks);
                     }
                     
-                    // Capture frame
                     byte[]? frameData = TryCaptureFrame(bytesPerFrame);
                     
                     if (frameData != null)
                     {
-                        // New frame captured
                         lastValidFrame = frameData;
                         _totalFramesCaptured++;
                         consecutiveDrops = 0;
                         
-                        // Send to FFmpeg
                         if (_ffmpegInput != null && _ffmpegInput.CanWrite)
                         {
                             try
@@ -235,7 +267,6 @@ namespace ReBuffer
                             }
                             catch (IOException)
                             {
-                                // FFmpeg pipe closed, stop recording
                                 Console.WriteLine("⚠ FFmpeg pipe closed");
                                 break;
                             }
@@ -243,7 +274,6 @@ namespace ReBuffer
                     }
                     else if (lastValidFrame != null && consecutiveDrops < MAX_CONSECUTIVE_DROPS)
                     {
-                        // Repeat last frame for smooth playback
                         consecutiveDrops++;
                         if (_ffmpegInput != null && _ffmpegInput.CanWrite)
                         {
@@ -261,13 +291,11 @@ namespace ReBuffer
                     _frameNumber++;
                     nextFrameTicks += targetTicks;
                     
-                    // Catch up if behind
                     if (nextFrameTicks < currentTicks - (targetTicks * 5))
                     {
                         nextFrameTicks = currentTicks + targetTicks;
                     }
 
-                    // Stats every 10 seconds
                     if (_frameNumber % (_fps * 10) == 0)
                     {
                         double elapsed = _frameTimer.Elapsed.TotalSeconds;
@@ -296,17 +324,14 @@ namespace ReBuffer
             
             try
             {
-                // Non-blocking frame acquisition
                 var result = _duplicatedOutput.TryAcquireNextFrame(0, out var frameInfo, out screenResource);
                 
                 if (result.Failure || screenResource == null)
                     return null;
 
-                // Fast GPU copy
                 using var screenTexture = screenResource.QueryInterface<Texture2D>();
                 _device.ImmediateContext.CopyResource(screenTexture, _stagingTexture);
 
-                // Fast CPU read
                 var dataBox = _device.ImmediateContext.MapSubresource(
                     _stagingTexture, 0, MapMode.Read, MapFlags.None);
 
@@ -339,7 +364,10 @@ namespace ReBuffer
             _isRecording = false;
             _cts?.Cancel();
             
-            // Stop FFmpeg gracefully
+            // Stop audio
+            _audioRecorder?.Stop();
+            
+            // Stop FFmpeg
             try
             {
                 _ffmpegInput?.Close();
@@ -376,7 +404,6 @@ namespace ReBuffer
             {
                 var sw = Stopwatch.StartNew();
                 
-                // Find all segment files
                 var dir = Path.GetDirectoryName(_segmentBasePath)!;
                 var baseFilename = Path.GetFileName(_segmentBasePath);
                 var pattern = $"{baseFilename}_*.mkv";
@@ -387,23 +414,66 @@ namespace ReBuffer
                 
                 if (segmentFiles.Length == 0)
                 {
-                    Console.WriteLine("❌ No segments found to save");
+                    Console.WriteLine("❌ No segments found");
                     return;
                 }
                 
-                Console.WriteLine($"  Found {segmentFiles.Length} segments");
+                Console.WriteLine($"  Found {segmentFiles.Length} video segments");
                 
-                // Create concat file for FFmpeg
+                // Concat video
                 string concatFile = Path.Combine(dir, $".concat_{Guid.NewGuid():N}.txt");
                 var concatLines = segmentFiles.Select(f => $"file '{Path.GetFileName(f)}'");
                 File.WriteAllLines(concatFile, concatLines);
                 
-                // Use FFmpeg to concat segments and remux to MP4
+                // Get audio files
+                string? desktopAudio = _audioRecorder?.GetDesktopAudioPath();
+                string? micAudio = _audioRecorder?.GetMicAudioPath();
+                
+                bool hasDesktop = !string.IsNullOrEmpty(desktopAudio) && File.Exists(desktopAudio);
+                bool hasMic = !string.IsNullOrEmpty(micAudio) && File.Exists(micAudio);
+                
+                string ffmpegArgs;
+                
+                if (hasDesktop && hasMic)
+                {
+                    // Mix both audio sources
+                    Console.WriteLine("  Mixing desktop + mic audio");
+                    ffmpegArgs = $"-f concat -safe 0 -i \"{concatFile}\" " +
+                               $"-i \"{desktopAudio}\" -i \"{micAudio}\" " +
+                               $"-filter_complex \"[1:a][2:a]amix=inputs=2:duration=first[a]\" " +
+                               $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 192k " +
+                               $"-movflags +faststart -y \"{outputPath}\"";
+                }
+                else if (hasDesktop)
+                {
+                    // Desktop audio only
+                    Console.WriteLine("  Adding desktop audio");
+                    ffmpegArgs = $"-f concat -safe 0 -i \"{concatFile}\" " +
+                               $"-i \"{desktopAudio}\" " +
+                               $"-map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k " +
+                               $"-movflags +faststart -y \"{outputPath}\"";
+                }
+                else if (hasMic)
+                {
+                    // Mic audio only
+                    Console.WriteLine("  Adding microphone audio");
+                    ffmpegArgs = $"-f concat -safe 0 -i \"{concatFile}\" " +
+                               $"-i \"{micAudio}\" " +
+                               $"-map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k " +
+                               $"-movflags +faststart -y \"{outputPath}\"";
+                }
+                else
+                {
+                    // Video only
+                    Console.WriteLine("  No audio - video only");
+                    ffmpegArgs = $"-f concat -safe 0 -i \"{concatFile}\" -c copy " +
+                               $"-movflags +faststart -y \"{outputPath}\"";
+                }
+                
                 var psi = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
-                    Arguments = $"-f concat -safe 0 -i \"{concatFile}\" -c copy " +
-                              $"-movflags +faststart -y \"{outputPath}\"",
+                    Arguments = ffmpegArgs,
                     UseShellExecute = false,
                     RedirectStandardOutput = false,
                     RedirectStandardError = false,
@@ -414,16 +484,16 @@ namespace ReBuffer
                 using var process = Process.Start(psi);
                 if (process == null)
                 {
-                    Console.WriteLine("❌ Failed to start FFmpeg for remux");
+                    Console.WriteLine("❌ Failed to start FFmpeg");
                     File.Delete(concatFile);
                     return;
                 }
                 
-                bool completed = process.WaitForExit(20000);
+                bool completed = process.WaitForExit(30000);
                 
                 if (!completed)
                 {
-                    Console.WriteLine("⚠ FFmpeg timeout, killing process");
+                    Console.WriteLine("⚠ FFmpeg timeout");
                     try { process.Kill(); } catch { }
                 }
                 
@@ -439,7 +509,7 @@ namespace ReBuffer
                 }
                 else
                 {
-                    Console.WriteLine($"❌ FFmpeg remux failed: {process.ExitCode}");
+                    Console.WriteLine($"❌ FFmpeg failed: {process.ExitCode}");
                 }
             }
             catch (Exception ex)
@@ -455,8 +525,6 @@ namespace ReBuffer
             try
             {
                 var dir = Path.GetDirectoryName(_segmentBasePath)!;
-                
-                // Delete this recording's segments
                 var baseFilename = Path.GetFileName(_segmentBasePath);
                 var pattern = $"{baseFilename}_*.mkv";
                 var tempFiles = Directory.GetFiles(dir, pattern);
@@ -466,7 +534,6 @@ namespace ReBuffer
                     try { File.Delete(file); } catch { }
                 }
                 
-                // Try to delete temp directory if empty
                 try
                 {
                     if (!Directory.EnumerateFiles(dir).Any())
@@ -484,6 +551,9 @@ namespace ReBuffer
             _isRecording = false;
             _cts?.Cancel();
             
+            // Stop audio
+            _audioRecorder?.Dispose();
+            
             // Stop capture
             _captureTask?.Wait(2000);
             
@@ -500,10 +570,9 @@ namespace ReBuffer
             }
             catch { }
             
-            // Cleanup temp files
             CleanupTempFiles();
             
-            // Cleanup DirectX resources
+            // Cleanup DirectX
             _duplicatedOutput?.Dispose();
             _stagingTexture?.Dispose();
             _device?.Dispose();

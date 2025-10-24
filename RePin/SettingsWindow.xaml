@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ReBuffer Settings" 
-        Height="600" 
-        Width="500"
+        Height="750" 
+        Width="550"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
         Background="#1E1E1E">
@@ -139,6 +139,133 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Audio Settings Section -->
+                <Border Background="#2D2D2D" CornerRadius="8" Padding="15" Margin="0,0,0,15">
+                    <StackPanel>
+                        <TextBlock Text="Audio Settings" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold" 
+                                   Foreground="#00D9FF"
+                                   Margin="0,0,0,15"/>
+
+                        <!-- Enable Audio -->
+                        <CheckBox x:Name="RecordAudioCheck" 
+                                  Content="Enable audio recording" 
+                                  Foreground="#CCC"
+                                  IsChecked="True"
+                                  Margin="0,0,0,15"
+                                  Checked="RecordAudioCheck_Changed"
+                                  Unchecked="RecordAudioCheck_Changed"/>
+
+                        <!-- Audio Options Panel -->
+                        <StackPanel x:Name="AudioOptionsPanel">
+                            <!-- Desktop Audio -->
+                            <CheckBox x:Name="RecordDesktopCheck" 
+                                      Content="Record desktop audio (system sounds)" 
+                                      Foreground="#CCC"
+                                      IsChecked="True"
+                                      Margin="0,0,0,10"
+                                      Checked="AudioSourceCheck_Changed"
+                                      Unchecked="AudioSourceCheck_Changed"/>
+                            
+                            <StackPanel x:Name="DesktopAudioPanel" Margin="20,0,0,15">
+                                <TextBlock Text="Desktop Audio Device:" 
+                                           Foreground="#AAA" 
+                                           FontSize="11"
+                                           Margin="0,0,0,5"/>
+                                <ComboBox x:Name="DesktopDeviceCombo" 
+                                          Background="#1E1E1E" 
+                                          Foreground="#CCC"
+                                          BorderBrush="#444"
+                                          Margin="0,0,0,10"/>
+                                
+                                <TextBlock Text="Desktop Volume:" 
+                                           Foreground="#AAA" 
+                                           FontSize="11"
+                                           Margin="0,0,0,5"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Slider x:Name="DesktopVolumeSlider" 
+                                            Grid.Column="0"
+                                            Minimum="0" 
+                                            Maximum="200" 
+                                            Value="100" 
+                                            TickFrequency="10"
+                                            IsSnapToTickEnabled="True"
+                                            ValueChanged="DesktopVolumeSlider_ValueChanged"/>
+                                    <TextBlock x:Name="DesktopVolumeText" 
+                                               Grid.Column="1"
+                                               Text="100%" 
+                                               Foreground="#00D9FF" 
+                                               FontWeight="Bold"
+                                               Margin="10,0,0,0"
+                                               VerticalAlignment="Center"
+                                               Width="50"
+                                               TextAlignment="Right"/>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Microphone -->
+                            <CheckBox x:Name="RecordMicCheck" 
+                                      Content="Record microphone" 
+                                      Foreground="#CCC"
+                                      IsChecked="True"
+                                      Margin="0,0,0,10"
+                                      Checked="AudioSourceCheck_Changed"
+                                      Unchecked="AudioSourceCheck_Changed"/>
+                            
+                            <StackPanel x:Name="MicrophonePanel" Margin="20,0,0,0">
+                                <TextBlock Text="Microphone Device:" 
+                                           Foreground="#AAA" 
+                                           FontSize="11"
+                                           Margin="0,0,0,5"/>
+                                <ComboBox x:Name="MicDeviceCombo" 
+                                          Background="#1E1E1E" 
+                                          Foreground="#CCC"
+                                          BorderBrush="#444"
+                                          Margin="0,0,0,10"/>
+                                
+                                <TextBlock Text="Microphone Volume:" 
+                                           Foreground="#AAA" 
+                                           FontSize="11"
+                                           Margin="0,0,0,5"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Slider x:Name="MicVolumeSlider" 
+                                            Grid.Column="0"
+                                            Minimum="0" 
+                                            Maximum="200" 
+                                            Value="100" 
+                                            TickFrequency="10"
+                                            IsSnapToTickEnabled="True"
+                                            ValueChanged="MicVolumeSlider_ValueChanged"/>
+                                    <TextBlock x:Name="MicVolumeText" 
+                                               Grid.Column="1"
+                                               Text="100%" 
+                                               Foreground="#00D9FF" 
+                                               FontWeight="Bold"
+                                               Margin="10,0,0,0"
+                                               VerticalAlignment="Center"
+                                               Width="50"
+                                               TextAlignment="Right"/>
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <TextBlock Text="💡 Both desktop and microphone audio will be mixed together"
+                                   FontSize="10"
+                                   Foreground="#888"
+                                   Margin="0,10,0,0"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- Video Quality Section -->
                 <Border Background="#2D2D2D" CornerRadius="8" Padding="15" Margin="0,0,0,15">
                     <StackPanel>
@@ -223,6 +350,8 @@
                             <Run Text="• Hardware encoding reduces CPU usage"/>
                             <LineBreak/>
                             <Run Text="• Lower quality = smaller file sizes"/>
+                            <LineBreak/>
+                            <Run Text="• Audio is recorded at 48kHz stereo AAC"/>
                             <LineBreak/>
                             <Run Text="• Changes require restart of recording"/>
                         </TextBlock>
