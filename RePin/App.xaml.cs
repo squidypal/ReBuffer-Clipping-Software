@@ -54,7 +54,21 @@ namespace ReBuffer
             _hotKeyManager = new GlobalHotKeyManager();
             _hotKeyManager.RegisterF8Callback(OnF8Pressed);
 
-            LogToTray("ReBuffer started - Press F8 to save clip");
+            string audioStatus = _settings.RecordAudio 
+                ? $"(Audio: {GetAudioStatusText()})" 
+                : "(Audio: Off)";
+            LogToTray($"ReBuffer started {audioStatus} - Press F8 to save clip");
+        }
+
+        private string GetAudioStatusText()
+        {
+            if (!_settings.RecordAudio) return "Off";
+            
+            var sources = new System.Collections.Generic.List<string>();
+            if (_settings.RecordDesktopAudio) sources.Add("Desktop");
+            if (_settings.RecordMicrophone) sources.Add("Mic");
+            
+            return sources.Count > 0 ? string.Join(" + ", sources) : "None";
         }
 
         private async void InitializeRecorder()
@@ -68,7 +82,14 @@ namespace ReBuffer
                     crf: _settings.GetCRFForQuality(),
                     preset: _settings.GetPresetForQuality(),
                     useHardwareEncoding: _settings.UseHardwareEncoding,
-                    savePath: _settings.SavePath
+                    savePath: _settings.SavePath,
+                    recordAudio: _settings.RecordAudio,
+                    desktopAudioDevice: _settings.DesktopAudioDevice,
+                    microphoneDevice: _settings.MicrophoneDevice,
+                    desktopVolume: _settings.DesktopVolume,
+                    micVolume: _settings.MicrophoneVolume,
+                    recordDesktop: _settings.RecordDesktopAudio,
+                    recordMic: _settings.RecordMicrophone
                 );
 
                 await _recorder.StartAsync();
@@ -199,7 +220,10 @@ namespace ReBuffer
                 await _recorder.StartAsync();
             }
 
-            LogToTray("Settings applied");
+            string audioStatus = _settings.RecordAudio 
+                ? $"(Audio: {GetAudioStatusText()})" 
+                : "(Audio: Off)";
+            LogToTray($"Settings applied {audioStatus}");
         }
 
         private void OpenClipsFolder()
