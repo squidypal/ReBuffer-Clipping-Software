@@ -156,6 +156,11 @@ namespace ReBuffer
 
         private void UpdateAudioPanelVisibility()
         {
+            // Null checks to prevent errors during initialization
+            if (AudioOptionsPanel == null || RecordAudioCheck == null) return;
+            if (DesktopAudioPanel == null || RecordDesktopCheck == null) return;
+            if (MicrophonePanel == null || RecordMicCheck == null) return;
+            
             AudioOptionsPanel.IsEnabled = RecordAudioCheck.IsChecked ?? false;
             DesktopAudioPanel.IsEnabled = RecordDesktopCheck.IsChecked ?? false;
             MicrophonePanel.IsEnabled = RecordMicCheck.IsChecked ?? false;
