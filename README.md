@@ -1,5 +1,6 @@
 # ReBuffer
-<img width="320" height="320" alt="ReBufferLogo" src="https://github.com/user-attachments/assets/86eed7e1-1cbd-4375-b231-a7f16e013135" />
+
+<img width="320" height="320" alt="RebufferLogoFixed" src="https://github.com/user-attachments/assets/8724ab3e-10b8-44d2-bb40-8a87bcf43786" />
 
 ### ReBuffer is INCOMPLETE - Meaning I do not reccomend using it as your daily clipping software
 
