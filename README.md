@@ -1,4 +1,4 @@
-# ReBuffer
+# ReBuffer - Clipping Software 
 
 <img width="320" height="320" alt="RebufferLogoFixed" src="https://github.com/user-attachments/assets/8724ab3e-10b8-44d2-bb40-8a87bcf43786" />
 
