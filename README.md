@@ -13,3 +13,8 @@ ReBuffer has been put on halt while I focus on other things in my life, but I fi
 - Hotkey Clipping
 - Adjustable Quality Settings
 - Adjustable Directory
+
+
+### Installation 
+Code is available to be compiled by anyone who wants to; Simply download the source code and compile it using your favourite IDE such as Visual Studio or Rider.
+An easy to download .exe will be available when most/all issues are ironed out
