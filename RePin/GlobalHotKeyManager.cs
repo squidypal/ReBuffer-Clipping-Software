@@ -1,67 +1,107 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
-using System.Windows.Input;
 
 namespace ReBuffer
 {
-    // Low-level keyboard hook for global hotkey
-    public class GlobalHotKeyManager : IDisposable
+    /// <summary>
+    /// Instance-based low-level keyboard hook manager for global hotkeys.
+    /// </summary>
+    public sealed class GlobalHotKeyManager : IDisposable
     {
         private const int WH_KEYBOARD_LL = 13;
         private const int WM_KEYDOWN = 0x0100;
-        private static LowLevelKeyboardProc _proc = HookCallback;
-        private static IntPtr _hookID = IntPtr.Zero;
-        private static Action? _hotkeyCallback;
-        private static int _targetKeyCode = 0x77; // F8 by default
 
-        public event EventHandler? HotKeyPressed;
+        // Instance fields (not static) for thread safety
+        private readonly LowLevelKeyboardProc _proc;
+        private IntPtr _hookId = IntPtr.Zero;
+        private Action? _hotkeyCallback;
+        private int _targetKeyCode = 0x77; // F8 by default
+        private bool _disposed;
 
         public GlobalHotKeyManager()
         {
-            _hookID = SetHook(_proc);
+            // Pin the delegate to prevent GC from collecting it while the hook is active
+            _proc = HookCallback;
+            _hookId = SetHook(_proc);
+
+            if (_hookId == IntPtr.Zero)
+            {
+                Console.WriteLine("⚠ Failed to set keyboard hook");
+            }
         }
 
+        /// <summary>
+        /// Registers a hotkey with the specified key code and callback.
+        /// </summary>
+        /// <param name="keyCode">The virtual key code (use Keys enum)</param>
+        /// <param name="callback">The action to invoke when the hotkey is pressed</param>
         public void RegisterHotKey(int keyCode, Action callback)
         {
             _targetKeyCode = keyCode;
             _hotkeyCallback = callback;
         }
 
-        private static IntPtr SetHook(LowLevelKeyboardProc proc)
+        /// <summary>
+        /// Gets or sets the current target key code.
+        /// </summary>
+        public int TargetKeyCode
         {
-            using (Process curProcess = Process.GetCurrentProcess())
-            using (ProcessModule? curModule = curProcess.MainModule)
+            get => _targetKeyCode;
+            set => _targetKeyCode = value;
+        }
+
+        private IntPtr SetHook(LowLevelKeyboardProc proc)
+        {
+            using var curProcess = Process.GetCurrentProcess();
+            using var curModule = curProcess.MainModule;
+
+            if (curModule != null)
             {
-                if (curModule != null)
-                {
-                    return SetWindowsHookEx(WH_KEYBOARD_LL, proc,
-                        GetModuleHandle(curModule.ModuleName), 0);
-                }
+                return SetWindowsHookEx(WH_KEYBOARD_LL, proc,
+                    GetModuleHandle(curModule.ModuleName), 0);
             }
+
             return IntPtr.Zero;
         }
 
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
-        private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
             if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
                 int vkCode = Marshal.ReadInt32(lParam);
                 if (vkCode == _targetKeyCode)
                 {
-                    _hotkeyCallback?.Invoke();
+                    try
+                    {
+                        _hotkeyCallback?.Invoke();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"⚠ Hotkey callback error: {ex.Message}");
+                    }
                 }
             }
-            return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            return CallNextHookEx(_hookId, nCode, wParam, lParam);
         }
 
         public void Dispose()
         {
-            UnhookWindowsHookEx(_hookID);
+            if (_disposed) return;
+            _disposed = true;
+
+            if (_hookId != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hookId);
+                _hookId = IntPtr.Zero;
+            }
+
+            _hotkeyCallback = null;
         }
+
+        #region Native Methods
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr SetWindowsHookEx(int idHook,
@@ -77,8 +117,13 @@ namespace ReBuffer
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        #endregion
     }
 
+    /// <summary>
+    /// Virtual key codes for function keys.
+    /// </summary>
     public enum Keys
     {
         F1 = 0x70,

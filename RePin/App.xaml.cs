@@ -38,6 +38,36 @@ namespace ReBuffer
             // Load settings
             _settings = Settings.Load();
 
+            // Check FFmpeg availability
+            if (!ScreenRecorder.IsFfmpegAvailable())
+            {
+                var result = MessageBox.Show(
+                    "FFmpeg was not found in your system PATH.\n\n" +
+                    "ReBuffer requires FFmpeg to record and save clips.\n\n" +
+                    "Please install FFmpeg and add it to your PATH, then restart ReBuffer.\n\n" +
+                    "Would you like to open the FFmpeg download page?",
+                    "FFmpeg Not Found",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Error);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "https://ffmpeg.org/download.html",
+                        UseShellExecute = true
+                    });
+                }
+
+                _instanceMutex?.ReleaseMutex();
+                _instanceMutex?.Dispose();
+                Shutdown();
+                return;
+            }
+
+            var ffmpegVersion = ScreenRecorder.GetFfmpegVersion();
+            Console.WriteLine($"✓ FFmpeg found: {ffmpegVersion}");
+
             // Create system tray icon with custom icon
             _notifyIcon = new NotifyIcon
             {
@@ -149,7 +179,7 @@ namespace ReBuffer
             }
         }
 
-        private void ToggleRecording()
+        private async void ToggleRecording()
         {
             if (_recorder == null) return;
 
@@ -157,7 +187,7 @@ namespace ReBuffer
 
             if (_isRecording)
             {
-                _recorder.StartAsync();
+                await _recorder.StartAsync();
                 _notifyIcon!.Text = "ReBuffer - Recording Active";
                 _notifyIcon.Icon = LoadAppIcon();
                 LogToTray("Recording resumed");
@@ -245,13 +275,13 @@ namespace ReBuffer
             if (_mainWindow == null || !_mainWindow.IsLoaded)
             {
                 _mainWindow = new MainWindow(_recorder, _settings, _isRecording);
-                _mainWindow.RecordingToggled += (isRecording) => 
+                _mainWindow.RecordingToggled += async (isRecording) =>
                 {
                     _isRecording = isRecording;
                     if (_recorder != null)
                     {
                         if (isRecording)
-                            _recorder.StartAsync();
+                            await _recorder.StartAsync();
                         else
                             _recorder.Pause();
                     }
@@ -268,7 +298,7 @@ namespace ReBuffer
             _mainWindow.Activate();
         }
 
-        private void ShowSettings()
+        private async void ShowSettings()
         {
             try
             {
@@ -277,7 +307,7 @@ namespace ReBuffer
 
                 if (result == true && settingsWindow.SettingsChanged)
                 {
-                    ReinitializeRecorder();
+                    await ReinitializeRecorder();
                 }
             }
             catch (Exception ex)
