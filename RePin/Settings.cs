@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -14,10 +15,10 @@ namespace ReBuffer
         public bool UseHardwareEncoding { get; set; } = true;
         public string EncodingPreset { get; set; } = "ultrafast";
         public string SavePath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "clips");
-        
+
         // Hotkey settings
         public int HotKeyCode { get; set; } = 0x77; // F8 by default
-        
+
         // Audio settings
         public bool RecordAudio { get; set; } = true;
         public bool RecordDesktopAudio { get; set; } = true;
@@ -26,7 +27,15 @@ namespace ReBuffer
         public string? MicrophoneDevice { get; set; } = null; // null = default
         public float DesktopVolume { get; set; } = 1.0f; // 0.0 to 2.0
         public float MicrophoneVolume { get; set; } = 1.0f; // 0.0 to 2.0
-        
+        public int AudioDelayMs { get; set; } = 0; // Audio delay in milliseconds (-500 to 500)
+
+        // Monitor settings
+        public int MonitorIndex { get; set; } = 0; // 0 = primary monitor
+
+        // Codec settings
+        public VideoCodec Codec { get; set; } = VideoCodec.H264;
+        public HardwareEncoder HardwareEncoderType { get; set; } = HardwareEncoder.Auto;
+
         // Startup settings
         public bool RunAtStartup { get; set; } = true;
         
@@ -142,6 +151,79 @@ namespace ReBuffer
                 _ => "ultrafast"
             };
         }
+
+        /// <summary>
+        /// Gets the FFmpeg encoder string based on codec and hardware encoder settings.
+        /// </summary>
+        public string GetEncoderString()
+        {
+            if (!UseHardwareEncoding)
+            {
+                return Codec switch
+                {
+                    VideoCodec.H264 => "libx264",
+                    VideoCodec.H265 => "libx265",
+                    VideoCodec.VP9 => "libvpx-vp9",
+                    VideoCodec.AV1 => "libaom-av1",
+                    _ => "libx264"
+                };
+            }
+
+            // Hardware encoding
+            return (Codec, HardwareEncoderType) switch
+            {
+                (VideoCodec.H264, HardwareEncoder.NVIDIA) => "h264_nvenc",
+                (VideoCodec.H264, HardwareEncoder.AMD) => "h264_amf",
+                (VideoCodec.H264, HardwareEncoder.Intel) => "h264_qsv",
+                (VideoCodec.H264, HardwareEncoder.Auto) => "h264_nvenc", // Default to NVIDIA
+                (VideoCodec.H265, HardwareEncoder.NVIDIA) => "hevc_nvenc",
+                (VideoCodec.H265, HardwareEncoder.AMD) => "hevc_amf",
+                (VideoCodec.H265, HardwareEncoder.Intel) => "hevc_qsv",
+                (VideoCodec.H265, HardwareEncoder.Auto) => "hevc_nvenc",
+                // VP9 and AV1 hardware encoding is limited
+                (VideoCodec.VP9, _) => "libvpx-vp9",
+                (VideoCodec.AV1, HardwareEncoder.NVIDIA) => "av1_nvenc",
+                (VideoCodec.AV1, _) => "libaom-av1",
+                _ => "h264_nvenc"
+            };
+        }
+
+        /// <summary>
+        /// Gets available monitors.
+        /// </summary>
+        public static List<MonitorInfo> GetAvailableMonitors()
+        {
+            var monitors = new List<MonitorInfo>();
+            var allScreens = System.Windows.Forms.Screen.AllScreens;
+
+            for (int i = 0; i < allScreens.Length; i++)
+            {
+                var screen = allScreens[i];
+                monitors.Add(new MonitorInfo
+                {
+                    Index = i,
+                    Name = screen.Primary ? $"Monitor {i + 1} (Primary)" : $"Monitor {i + 1}",
+                    DeviceName = screen.DeviceName,
+                    Width = screen.Bounds.Width,
+                    Height = screen.Bounds.Height,
+                    IsPrimary = screen.Primary
+                });
+            }
+
+            return monitors;
+        }
+    }
+
+    public class MonitorInfo
+    {
+        public int Index { get; set; }
+        public string Name { get; set; } = "";
+        public string DeviceName { get; set; } = "";
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public bool IsPrimary { get; set; }
+
+        public override string ToString() => $"{Name} ({Width}x{Height})";
     }
 
     public enum VideoQuality
@@ -152,5 +234,21 @@ namespace ReBuffer
         VeryHigh,
         Ultra,
         Custom
+    }
+
+    public enum VideoCodec
+    {
+        H264,
+        H265,
+        VP9,
+        AV1
+    }
+
+    public enum HardwareEncoder
+    {
+        Auto,
+        NVIDIA,
+        AMD,
+        Intel
     }
 }

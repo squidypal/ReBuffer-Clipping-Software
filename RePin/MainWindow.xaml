@@ -111,19 +111,23 @@
             </Grid>
 
             <!-- Status Card -->
-            <Border Grid.Row="1" 
-                    Background="#161616" 
-                    CornerRadius="12" 
+            <Border Grid.Row="1"
+                    Background="#161616"
+                    CornerRadius="12"
                     Padding="24,20"
                     Margin="0,0,0,20">
                 <Border.Effect>
-                    <DropShadowEffect Color="#000000" 
-                                    BlurRadius="15" 
-                                    ShadowDepth="3" 
+                    <DropShadowEffect Color="#000000"
+                                    BlurRadius="15"
+                                    ShadowDepth="3"
                                     Opacity="0.4"/>
                 </Border.Effect>
-                
+
                 <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -131,9 +135,9 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Status Indicator -->
-                    <Border Grid.Column="0" 
-                            Width="12" 
-                            Height="12" 
+                    <Border Grid.Row="0" Grid.Column="0"
+                            Width="12"
+                            Height="12"
                             CornerRadius="6"
                             Margin="0,0,16,0"
                             VerticalAlignment="Center">
@@ -150,38 +154,110 @@
                     </Border>
 
                     <!-- Status Info -->
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock x:Name="StatusText" 
-                                   Text="Recording Active" 
-                                   FontSize="17" 
+                    <StackPanel Grid.Row="0" Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock x:Name="StatusText"
+                                   Text="Recording Active"
+                                   FontSize="17"
                                    FontWeight="SemiBold"
                                    Foreground="#FFFFFF"/>
-                        <TextBlock x:Name="InfoText" 
-                                   Text="Buffer: 30 seconds @ 60 FPS" 
-                                   FontSize="13" 
+                        <TextBlock x:Name="InfoText"
+                                   Text="Buffer: 30 seconds @ 60 FPS"
+                                   FontSize="13"
                                    Foreground="#808080"
                                    Margin="0,4,0,0"/>
                     </StackPanel>
 
                     <!-- Hotkey Badge -->
-                    <Border Grid.Column="2" 
-                            Background="#1F1F1F" 
+                    <Border Grid.Row="0" Grid.RowSpan="2" Grid.Column="2"
+                            Background="#1F1F1F"
                             CornerRadius="8"
                             Padding="16,12"
                             VerticalAlignment="Center">
                         <StackPanel>
                             <TextBlock x:Name="HotKeyText"
-                                       Text="F8" 
-                                       FontSize="22" 
+                                       Text="F8"
+                                       FontSize="22"
                                        FontWeight="Bold"
                                        Foreground="#39c20f"
                                        HorizontalAlignment="Center"
                                        Margin="0,0,0,2"/>
-                            <TextBlock Text="Save Clip" 
-                                       FontSize="11" 
+                            <TextBlock Text="Save Clip"
+                                       FontSize="11"
                                        Foreground="#707070"
                                        HorizontalAlignment="Center"/>
                         </StackPanel>
+                    </Border>
+
+                    <!-- Performance Stats Row -->
+                    <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                            Background="#1A1A1A"
+                            CornerRadius="6"
+                            Padding="12,8"
+                            Margin="0,12,16,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- FPS -->
+                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                <TextBlock x:Name="FpsText"
+                                           Text="60.0"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Foreground="#39c20f"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="FPS"
+                                           FontSize="10"
+                                           Foreground="#606060"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Capture Rate -->
+                            <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                                <TextBlock x:Name="CaptureRateText"
+                                           Text="100%"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Foreground="#39c20f"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Capture"
+                                           FontSize="10"
+                                           Foreground="#606060"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Dropped Frames -->
+                            <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                <TextBlock x:Name="DroppedText"
+                                           Text="0"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Foreground="#808080"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Dropped"
+                                           FontSize="10"
+                                           Foreground="#606060"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Buffer Health -->
+                            <StackPanel Grid.Column="3" HorizontalAlignment="Center">
+                                <TextBlock x:Name="BufferHealthText"
+                                           Text="0%"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Foreground="#808080"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Buffer"
+                                           FontSize="10"
+                                           Foreground="#606060"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
                     </Border>
                 </Grid>
             </Border>

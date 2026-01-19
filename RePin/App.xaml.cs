@@ -166,7 +166,9 @@ namespace ReBuffer
                     desktopVolume: _settings.DesktopVolume,
                     micVolume: _settings.MicrophoneVolume,
                     recordDesktop: _settings.RecordDesktopAudio,
-                    recordMic: _settings.RecordMicrophone
+                    recordMic: _settings.RecordMicrophone,
+                    monitorIndex: _settings.MonitorIndex,
+                    encoder: _settings.GetEncoderString()
                 );
 
                 await _recorder.StartAsync();
